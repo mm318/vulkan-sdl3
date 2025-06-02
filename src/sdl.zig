@@ -22,6 +22,7 @@ pub const FRect = c.SDL_FRect;
 pub const Rect = c.SDL_Rect;
 pub const Texture = c.SDL_Texture;
 pub const Renderer = c.SDL_Renderer;
+pub const Window = c.SDL_Window;
 
 pub const TextureAccess = enum(c_uint) {
     static = c.SDL_TEXTUREACCESS_STATIC,
@@ -218,6 +219,10 @@ pub fn getSystemTheme() SystemTheme {
         c.SDL_SYSTEM_THEME_UNKNOWN => .unknown,
         else => .unknown,
     };
+}
+
+pub fn getDisplayContentScale(window: *Window) f32 {
+    return c.SDL_GetWindowDisplayScale(window);
 }
 
 fn mapToPtr(comptime T: type, value: *const ?T) ?*const T {

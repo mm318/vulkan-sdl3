@@ -24,40 +24,6 @@ pub fn appInit(gpa: std.mem.Allocator, _: [][*:0]u8) !*AppState {
     const log = std.log.scoped(.init);
     logSdlInfo(log);
 
-    var seed: u64 = 0;
-    var percent: f32 = 0.05;
-
-    {
-        var it = try std.process.argsWithAllocator(gpa);
-        defer it.deinit();
-
-        _ = it.next();
-
-        var i: usize = 0;
-        while (it.next()) |arg| {
-            defer i += 1;
-
-            switch (i) {
-                0 => {
-                    seed = try std.fmt.parseInt(u64, arg, 10);
-                },
-                1 => {
-                    percent = try std.fmt.parseFloat(f32, arg);
-                },
-                else => {
-                    log.err("unknown arg: {s}", .{arg});
-                    return error.UnknownArg;
-                },
-            }
-        }
-
-        if (i == 0) {
-            seed = @bitCast(std.time.timestamp());
-        }
-    }
-
-    log.info("seed = {d}, percent = {d}", .{ seed, percent });
-
     try sdl.setHint("SDL_HINT_WINDOWS_DPI_SCALING", "1");
     try sdl.setHint(c.SDL_HINT_RENDER_VSYNC, "1");
     try sdl.setAppMetadata("Game of Life", "dev", "cc.knightpp.game_of_life");
@@ -117,7 +83,10 @@ pub fn appInit(gpa: std.mem.Allocator, _: [][*:0]u8) !*AppState {
     var game = try Game.init(gpa, texture_width, texture_height);
     errdefer game.deinit(gpa);
 
-    game.fill(seed, percent);
+    const args = try parseArgs(gpa);
+    log.info("seed = {d}, percent = {d}", .{ args.seed, args.percent });
+
+    game.fill(args.seed, args.percent);
     game.live(); // remove random noise
 
     state.* = .{
@@ -136,6 +105,9 @@ pub fn appInit(gpa: std.mem.Allocator, _: [][*:0]u8) !*AppState {
     backend.initial_scale = c.SDL_GetDisplayContentScale(c.SDL_GetDisplayForWindow(window));
     state.ui.window = try dvui.Window.init(@src(), gpa, backend.backend(), .{});
     errdefer state.ui.window.deinit();
+
+    // state.ui.backend.initial_scale = c.SDL_GetDisplayContentScale(c.SDL_GetDisplayForWindow(window));
+    // log.info("SDL3 backend scale {d}", .{state.ui.backend.initial_scale});
 
     queryAndSetTheme(state);
 
@@ -277,4 +249,41 @@ fn queryAndSetTheme(state: *AppState) void {
         .light, .unknown => state.ui.window.theme = state.ui.window.themes.get("Adwaita Light").?,
         .dark => state.ui.window.theme = state.ui.window.themes.get("Adwaita Dark").?,
     }
+}
+
+const Args = struct {
+    seed: u64 = 0,
+    percent: f32 = 0.05,
+};
+
+fn parseArgs(gpa: std.mem.Allocator) !Args {
+    var it = try std.process.argsWithAllocator(gpa);
+    defer it.deinit();
+
+    _ = it.next();
+
+    var args: Args = .{};
+    var i: usize = 0;
+    while (it.next()) |arg| {
+        defer i += 1;
+
+        switch (i) {
+            0 => {
+                args.seed = try std.fmt.parseInt(u64, arg, 10);
+            },
+            1 => {
+                args.percent = try std.fmt.parseFloat(f32, arg);
+            },
+            else => {
+                std.log.err("unknown arg: {s}", .{arg});
+                return error.UnknownArg;
+            },
+        }
+    }
+
+    if (i == 0) {
+        args.seed = @bitCast(std.time.timestamp());
+    }
+
+    return args;
 }
