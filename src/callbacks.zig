@@ -83,12 +83,6 @@ pub fn appInit(gpa: std.mem.Allocator, _: [][*:0]u8) !*AppState {
     var game = try Game.init(gpa, texture_width, texture_height);
     errdefer game.deinit(gpa);
 
-    const args = try parseArgs(gpa);
-    log.info("seed = {d}, percent = {d}", .{ args.seed, args.percent });
-
-    game.fill(args.seed, args.percent);
-    game.live(); // remove random noise
-
     state.* = .{
         .gpa = gpa,
         .window = window,
@@ -100,6 +94,13 @@ pub fn appInit(gpa: std.mem.Allocator, _: [][*:0]u8) !*AppState {
             .window = undefined,
         },
     };
+
+    try parseArgs(gpa, state);
+
+    log.info("seed = {d}, percent = {d}", .{ state.seed, state.percent });
+
+    game.fill(state.seed, state.percent);
+    game.live(); // remove random noise
 
     const backend = &state.ui.backend;
     backend.initial_scale = c.SDL_GetDisplayContentScale(c.SDL_GetDisplayForWindow(window));
@@ -119,8 +120,8 @@ pub fn appIterate(state: *AppState) !c.SDL_AppResult {
 
     try sdl.renderClear(state.renderer);
 
-    const wait_time: u64 = @intFromFloat(state.wait * 1000.0);
-    const repeats: usize = @intFromFloat(state.repeat * 1000.0 + 1.0);
+    const wait_time: u64 = state.ui.normalizeWait();
+    const repeats: usize = state.ui.normalizeRepeat();
     if (wait_time == 0) {
         for (0..repeats) |_| {
             state.game.live();
@@ -139,7 +140,7 @@ pub fn appIterate(state: *AppState) !c.SDL_AppResult {
 
     try drawGameOnTexture(state);
     try sdl.renderTexture(state.renderer, state.texture, null, null);
-    try renderUi(state, repeats, wait_time);
+    try handleUi(state);
 
     try sdl.renderPresent(state.renderer);
 
@@ -209,27 +210,74 @@ fn drawGameOnTexture(state: *AppState) !void {
 }
 
 // ui should be rendered last to override the game texture
-fn renderUi(state: *AppState, repeats: usize, wait_time: u64) !void {
+fn handleUi(state: *AppState) !void {
+    const gpa = state.gpa;
     const ui = &state.ui;
     {
         try ui.window.begin(std.time.nanoTimestamp());
 
         var float = try dvui.floatingWindow(@src(), .{}, .{
-            .max_size_content = .{ .w = 400, .h = 400 },
+            // .color_fill = .{ .color = ui.window.theme.color_fill.opacity(0.1) },
         });
         defer float.deinit();
 
         try dvui.windowHeader("Controls", "", null);
 
-        try dvui.label(@src(), "Repeats: {d}", .{repeats}, .{});
-        _ = try dvui.slider(@src(), .horizontal, &state.repeat, .{
+        try dvui.label(@src(), "Repeats: {d}", .{ui.normalizeRepeat()}, .{});
+        _ = try dvui.slider(@src(), .horizontal, &ui.repeat, .{
             .expand = .horizontal,
         });
 
-        try dvui.label(@src(), "Wait time: {d} ms", .{wait_time}, .{});
-        _ = try dvui.slider(@src(), .horizontal, &state.wait, .{
+        try dvui.label(@src(), "Wait time: {d} ms", .{ui.normalizeWait()}, .{});
+        _ = try dvui.slider(@src(), .horizontal, &ui.wait, .{
             .expand = .horizontal,
         });
+
+        if (try dvui.labelClick(@src(), "Seed: {d}", .{state.seed}, .{})) {
+            const str_seed = try std.fmt.allocPrintZ(gpa, "{d}", .{state.seed});
+            defer gpa.free(str_seed);
+
+            try sdl.setClipboardText(str_seed);
+        }
+
+        const text_entry = try dvui.textEntry(@src(), .{
+            .placeholder = "custom seed",
+            .scroll_vertical = false,
+            .scroll_horizontal = true,
+            .text = .{ .buffer_dynamic = .{
+                .backing = &ui.seed_text_input,
+                .allocator = gpa,
+                .limit = 64,
+            } },
+        }, .{
+            .expand = .horizontal,
+            .color_border = if (ui.seed_text_valid) null else .{ .color = .{ .g = 0, .b = 0 } },
+        });
+        text_entry.deinit();
+
+        try dvui.label(@src(), "Fill percent: {d:0.5}", .{state.percent}, .{});
+        _ = try dvui.slider(@src(), .horizontal, &ui.percent_slider, .{ .expand = .horizontal });
+
+        if (try dvui.button(
+            @src(),
+            "Start over",
+            .{ .draw_focus = false },
+            .{ .expand = .horizontal },
+        )) btn: {
+            if (text_entry.len != 0) {
+                const new_seed = std.fmt.parseInt(u64, ui.seed_text_input[0..text_entry.len], 10) catch {
+                    ui.seed_text_valid = false;
+                    break :btn;
+                };
+                ui.seed_text_valid = true;
+                state.seed = new_seed;
+            }
+            state.percent = ui.normalizePercent();
+
+            state.game.reset();
+            state.game.fill(state.seed, state.percent);
+            state.game.live();
+        }
 
         if (ui.window.cursorRequestedFloating()) |cursor| {
             // cursor is over floating window, dvui sets it
@@ -251,28 +299,22 @@ fn queryAndSetTheme(state: *AppState) void {
     }
 }
 
-const Args = struct {
-    seed: u64 = 0,
-    percent: f32 = 0.05,
-};
-
-fn parseArgs(gpa: std.mem.Allocator) !Args {
+fn parseArgs(gpa: std.mem.Allocator, state: *AppState) !void {
     var it = try std.process.argsWithAllocator(gpa);
     defer it.deinit();
 
     _ = it.next();
 
-    var args: Args = .{};
     var i: usize = 0;
     while (it.next()) |arg| {
         defer i += 1;
 
         switch (i) {
             0 => {
-                args.seed = try std.fmt.parseInt(u64, arg, 10);
+                state.seed = try std.fmt.parseInt(u64, arg, 10);
             },
             1 => {
-                args.percent = try std.fmt.parseFloat(f32, arg);
+                state.percent = try std.fmt.parseFloat(f32, arg);
             },
             else => {
                 std.log.err("unknown arg: {s}", .{arg});
@@ -282,8 +324,6 @@ fn parseArgs(gpa: std.mem.Allocator) !Args {
     }
 
     if (i == 0) {
-        args.seed = @bitCast(std.time.timestamp());
+        state.seed = @bitCast(std.time.timestamp());
     }
-
-    return args;
 }

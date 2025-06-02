@@ -5,7 +5,6 @@ grid: []bool,
 width: usize,
 height: usize,
 generation: usize = 0,
-alive: usize = 0,
 
 pub fn init(gpa: std.mem.Allocator, width: usize, height: usize) !Self {
     std.debug.assert(width > 0);
@@ -102,7 +101,6 @@ pub fn fill(self: *Self, seed: u64, percent: f32) void {
     for (0..num) |_| {
         const i = rng.uintLessThan(usize, self.grid.len);
 
-        self.alive += 1;
         self.grid[i] = true;
     }
 }
@@ -141,3 +139,8 @@ pub const Iterator = struct {
         };
     }
 };
+
+pub fn reset(self: *Self) void {
+    self.generation = 0;
+    @memset(self.grid, false);
+}

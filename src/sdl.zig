@@ -225,6 +225,10 @@ pub fn getDisplayContentScale(window: *Window) f32 {
     return c.SDL_GetWindowDisplayScale(window);
 }
 
+pub fn setClipboardText(str: [:0]const u8) !void {
+    try errify(c.SDL_SetClipboardText(str));
+}
+
 fn mapToPtr(comptime T: type, value: *const ?T) ?*const T {
     if (value.*) |*x| {
         return @constCast(x);

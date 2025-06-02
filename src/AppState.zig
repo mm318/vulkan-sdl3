@@ -3,7 +3,29 @@ const sdl = @import("sdl.zig");
 const dvui = @import("dvui");
 const Game = @import("Game.zig");
 const SdlBackend = dvui.backend;
-const Self = @This();
+const AppState = @This();
+
+pub const Ui = struct {
+    backend: SdlBackend,
+    window: dvui.Window,
+    seed_text_input: []u8 = &.{},
+    seed_text_valid: bool = true,
+    percent_slider: f32 = 0.05 * 2,
+    repeat: f32 = 0.0,
+    wait: f32 = 1.0,
+
+    pub fn normalizeWait(self: *const Ui) u64 {
+        return @intFromFloat(self.wait * 1000.0);
+    }
+
+    pub fn normalizeRepeat(self: *const Ui) usize {
+        return @intFromFloat(self.repeat * 1000.0 + 1.0);
+    }
+
+    pub fn normalizePercent(self: *const Ui) f32 {
+        return self.percent_slider / 2.0;
+    }
+};
 
 gpa: std.mem.Allocator,
 last_error: ?anyerror = null,
@@ -11,16 +33,13 @@ window: *sdl.c.SDL_Window,
 renderer: *sdl.c.SDL_Renderer,
 texture: *sdl.c.SDL_Texture,
 game: Game,
-repeat: f32 = 0.0,
-wait: f32 = 1.0,
 last_time: u64 = 0,
+seed: u64 = 0,
+percent: f32 = 0.05,
 
-ui: struct {
-    backend: SdlBackend,
-    window: dvui.Window,
-},
+ui: Ui,
 
-pub fn deinit(self: *Self) void {
+pub fn deinit(self: *AppState) void {
     const gpa = self.gpa;
 
     self.ui.backend.deinit();
@@ -34,6 +53,6 @@ pub fn deinit(self: *Self) void {
     gpa.destroy(self);
 }
 
-pub fn fromOpaque(appstate: ?*anyopaque) *Self {
+pub fn fromOpaque(appstate: ?*anyopaque) *AppState {
     return @alignCast(@ptrCast(appstate.?));
 }
