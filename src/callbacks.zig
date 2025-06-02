@@ -69,7 +69,7 @@ pub fn appInit(gpa: std.mem.Allocator, _: [][*:0]u8) !*AppState {
         "Game of Life",
         width,
         height,
-        0,
+        sdl.c.SDL_WINDOW_HIGH_PIXEL_DENSITY,
         &window,
         &renderer,
     );
