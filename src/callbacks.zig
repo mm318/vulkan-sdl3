@@ -97,8 +97,6 @@ pub fn appInit(gpa: std.mem.Allocator, _: [][*:0]u8) !*AppState {
 
     try parseArgs(gpa, state);
 
-    log.info("seed = {d}, percent = {d}", .{ state.seed, state.percent });
-
     game.fill(state.seed, state.percent);
     game.live(); // remove random noise
 
@@ -116,8 +114,6 @@ pub fn appInit(gpa: std.mem.Allocator, _: [][*:0]u8) !*AppState {
 }
 
 pub fn appIterate(state: *AppState) !c.SDL_AppResult {
-    const log = std.log.scoped(.iterate);
-
     try sdl.renderClear(state.renderer);
 
     const wait_time: u64 = state.ui.normalizeWait();
@@ -133,7 +129,6 @@ pub fn appIterate(state: *AppState) !c.SDL_AppResult {
                 state.game.live();
             }
 
-            log.info("generation: {d}", .{state.game.generation});
             state.last_time = current_time;
         }
     }
@@ -216,12 +211,12 @@ fn handleUi(state: *AppState) !void {
     {
         try ui.window.begin(std.time.nanoTimestamp());
 
-        var float = try dvui.floatingWindow(@src(), .{}, .{
-            // .color_fill = .{ .color = ui.window.theme.color_fill.opacity(0.1) },
-        });
+        var float = try dvui.floatingWindow(@src(), .{}, .{});
         defer float.deinit();
 
         try dvui.windowHeader("Controls", "", null);
+
+        try dvui.label(@src(), "Generation: {d}", .{state.game.generation}, .{});
 
         try dvui.label(@src(), "Repeats: {d}", .{ui.normalizeRepeat()}, .{});
         _ = try dvui.slider(@src(), .horizontal, &ui.repeat, .{
