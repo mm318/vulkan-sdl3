@@ -90,14 +90,18 @@ pub fn live(self: *Self) void {
     }
 }
 
-pub fn fill(self: *Self, seed: u64, percent: f32) void {
-    std.debug.assert(percent <= 1.0);
-    std.debug.assert(percent >= 0.0);
+pub fn fill(self: *Self, seed: u64, percent: u7) void {
+    std.debug.assert(percent <= 100 and percent >= 0);
 
     var xoshiro = std.Random.Xoshiro256.init(seed);
     const rng = xoshiro.random();
 
-    const num: usize = @intFromFloat(@as(f32, @floatFromInt(self.width * self.height)) * percent + 1.0);
+    const num: usize = blk: {
+        const cells: f32 = @floatFromInt(self.width * self.height);
+        const fraction = @as(f32, @floatFromInt(percent)) / 100.0;
+
+        break :blk @intFromFloat(cells * fraction);
+    };
     for (0..num) |_| {
         const i = rng.uintLessThan(usize, self.grid.len);
 

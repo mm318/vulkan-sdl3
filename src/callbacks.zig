@@ -250,7 +250,7 @@ fn handleUi(state: *AppState) !void {
         });
         text_entry.deinit();
 
-        try dvui.label(@src(), "Fill percent: {d:0.5}", .{state.percent}, .{});
+        try dvui.label(@src(), "Fill percent: {d:2}%", .{state.percent}, .{});
         _ = try dvui.slider(@src(), .horizontal, &ui.percent_slider, .{ .expand = .horizontal });
 
         if (try dvui.button(
@@ -309,7 +309,7 @@ fn parseArgs(gpa: std.mem.Allocator, state: *AppState) !void {
                 state.seed = try std.fmt.parseInt(u64, arg, 10);
             },
             1 => {
-                state.percent = try std.fmt.parseFloat(f32, arg);
+                state.percent = try std.fmt.parseInt(u7, arg, 10);
             },
             else => {
                 std.log.err("unknown arg: {s}", .{arg});
