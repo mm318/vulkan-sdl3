@@ -85,6 +85,7 @@ pub fn appInit(gpa: std.mem.Allocator, _: [][*:0]u8) !*AppState {
 
     state.* = .{
         .gpa = gpa,
+        .arena = std.heap.ArenaAllocator.init(gpa),
         .window = window,
         .renderer = renderer,
         .texture = texture,
@@ -102,7 +103,9 @@ pub fn appInit(gpa: std.mem.Allocator, _: [][*:0]u8) !*AppState {
 
     const backend = &state.ui.backend;
     backend.initial_scale = c.SDL_GetDisplayContentScale(c.SDL_GetDisplayForWindow(window));
-    state.ui.window = try dvui.Window.init(@src(), gpa, backend.backend(), .{});
+    state.ui.window = try dvui.Window.init(@src(), gpa, backend.backend(), .{
+        .arena = state.arena,
+    });
     errdefer state.ui.window.deinit();
 
     // state.ui.backend.initial_scale = c.SDL_GetDisplayContentScale(c.SDL_GetDisplayForWindow(window));
@@ -114,6 +117,7 @@ pub fn appInit(gpa: std.mem.Allocator, _: [][*:0]u8) !*AppState {
 }
 
 pub fn appIterate(state: *AppState) !c.SDL_AppResult {
+    _ = state.arena.reset(.retain_capacity);
     try sdl.renderClear(state.renderer);
 
     const wait_time: u64 = state.ui.normalizeWait();
@@ -207,6 +211,7 @@ fn drawGameOnTexture(state: *AppState) !void {
 // ui should be rendered last to override the game texture
 fn handleUi(state: *AppState) !void {
     const gpa = state.gpa;
+    const arena = state.arena.allocator();
     const ui = &state.ui;
     {
         try ui.window.begin(std.time.nanoTimestamp());
@@ -229,8 +234,8 @@ fn handleUi(state: *AppState) !void {
         });
 
         if (try dvui.labelClick(@src(), "Seed: {d}", .{state.seed}, .{})) {
-            const str_seed = try std.fmt.allocPrintZ(gpa, "{d}", .{state.seed});
-            defer gpa.free(str_seed);
+            const str_seed = try std.fmt.allocPrintZ(arena, "{d}", .{state.seed});
+            defer arena.free(str_seed);
 
             try sdl.setClipboardText(str_seed);
         }

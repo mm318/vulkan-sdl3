@@ -31,6 +31,7 @@ pub const Ui = struct {
 };
 
 gpa: std.mem.Allocator,
+arena: std.heap.ArenaAllocator,
 last_error: ?anyerror = null,
 window: *sdl.c.SDL_Window,
 renderer: *sdl.c.SDL_Renderer,
