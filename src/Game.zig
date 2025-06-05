@@ -53,29 +53,31 @@ pub fn deinit(self: *Game, gpa: std.mem.Allocator) void {
 }
 
 pub fn countNeighbors(self: Game, x: usize, y: usize) usize {
+    const width: isize = @intCast(self.width);
+    const height: isize = @intCast(self.height);
+
     var count: usize = 0;
     for (&[_]isize{ -1, 0, 1 }) |xd| {
         for (&[_]isize{ -1, 0, 1 }) |yd| {
-            var target_x = x;
-            switch (xd) {
-                -1 => target_x -|= 1,
-                0 => {},
-                1 => target_x +|= 1,
-                else => unreachable,
+            var target_x = @as(isize, @intCast(x)) + xd;
+            target_x = std.math.wrap(target_x, width);
+            if (target_x < 0) {
+                target_x = width + target_x;
+            } else if (target_x > width) {
+                target_x = @mod(target_x, width);
             }
-            var target_y = y;
-            switch (yd) {
-                -1 => target_y -|= 1,
-                0 => {},
-                1 => target_y +|= 1,
-                else => unreachable,
+
+            var target_y = @as(isize, @intCast(y)) + yd;
+            target_y = std.math.wrap(target_y, height);
+            if (target_y < 0) {
+                target_y = height + target_y;
+            } else if (target_y > height) {
+                target_y = @mod(target_y, height);
             }
 
             if (target_x == x and target_y == y) continue;
-            if (target_x >= self.width) continue;
-            if (target_y >= self.height) continue;
 
-            count += @intFromBool(self.grid.at(self.posToOffset(target_x, target_y)));
+            count += @intFromBool(self.grid.at(self.posToOffset(@intCast(target_x), @intCast(target_y))));
         }
     }
     return count;
