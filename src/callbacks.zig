@@ -235,20 +235,26 @@ fn handleUi(state: *AppState) !void {
             try sdl.setClipboardText(str_seed);
         }
 
-        const text_entry = try dvui.textEntry(@src(), .{
-            .placeholder = "custom seed",
-            .scroll_vertical = false,
-            .scroll_horizontal = true,
-            .text = .{ .buffer_dynamic = .{
-                .backing = &ui.seed_text_input,
-                .allocator = gpa,
-                .limit = 64,
-            } },
-        }, .{
-            .expand = .horizontal,
-            .color_border = if (ui.seed_text_valid) null else .{ .color = .{ .g = 0, .b = 0 } },
-        });
-        text_entry.deinit();
+        _ = try dvui.checkbox(@src(), &ui.randomize_seed, "Randomize seed?", .{});
+
+        const custom_seed_len = if (!ui.randomize_seed) blk: {
+            const text_entry = try dvui.textEntry(@src(), .{
+                .placeholder = "custom seed",
+                .scroll_vertical = false,
+                .scroll_horizontal = true,
+                .text = .{ .buffer_dynamic = .{
+                    .backing = &ui.seed_text_input,
+                    .allocator = gpa,
+                    .limit = 64,
+                } },
+            }, .{
+                .expand = .horizontal,
+                .color_border = if (ui.seed_text_valid) null else .{ .color = .{ .g = 0, .b = 0 } },
+            });
+            text_entry.deinit();
+
+            break :blk text_entry.len;
+        } else 0;
 
         try dvui.label(@src(), "Fill percent: {d:2}%", .{state.percent}, .{});
         _ = try dvui.slider(@src(), .horizontal, &ui.percent_slider, .{ .expand = .horizontal });
@@ -259,8 +265,8 @@ fn handleUi(state: *AppState) !void {
             .{ .draw_focus = false },
             .{ .expand = .horizontal },
         )) btn: {
-            if (text_entry.len != 0) {
-                const new_seed = std.fmt.parseInt(u64, ui.seed_text_input[0..text_entry.len], 10) catch {
+            if (custom_seed_len != 0) {
+                const new_seed = std.fmt.parseInt(u64, ui.seed_text_input[0..custom_seed_len], 10) catch {
                     ui.seed_text_valid = false;
                     break :btn;
                 };
@@ -268,6 +274,9 @@ fn handleUi(state: *AppState) !void {
                 state.seed = new_seed;
             }
             state.percent = ui.normalizePercent();
+            if (ui.randomize_seed) {
+                state.seed = @bitCast(std.time.milliTimestamp());
+            }
 
             state.game.reset();
             state.game.fill(state.seed, state.percent);
@@ -319,6 +328,6 @@ fn parseArgs(gpa: std.mem.Allocator, state: *AppState) !void {
     }
 
     if (i == 0) {
-        state.seed = @bitCast(std.time.timestamp());
+        state.seed = @bitCast(std.time.milliTimestamp());
     }
 }

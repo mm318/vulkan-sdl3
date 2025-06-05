@@ -13,6 +13,7 @@ pub const Ui = struct {
     percent_slider: f32 = 0.05 * 4,
     repeat: f32 = 0.0,
     wait: f32 = 1.0,
+    randomize_seed: bool = false,
 
     pub fn normalizeWait(self: *const Ui) u64 {
         return @intFromFloat(self.wait * 1000.0);
