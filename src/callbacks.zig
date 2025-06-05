@@ -186,9 +186,9 @@ fn drawGameOnTexture(state: *AppState) !void {
     const pitch_items = @as(usize, @intCast(@divExact(pitch_bytes, @sizeOf(sdl.PixelRGBX8888)))) * texture_height;
     const pixels = pixels_many[0..pitch_items];
 
-    std.debug.assert(pixels.len == state.game.grid.len);
+    std.debug.assert(pixels.len == state.game.len());
     for (pixels, 0..) |*pixel, i| {
-        if (state.game.grid[i]) {
+        if (state.game.at(i)) {
             pixel.* = .{
                 .r = 0xff,
                 .g = 0xff,

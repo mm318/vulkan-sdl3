@@ -1,31 +1,58 @@
 const std = @import("std");
-const Self = @This();
+const Game = @This();
 
-grid: []bool,
+const Grid = struct {
+    grid: []bool,
+
+    fn at(self: Grid, offset: usize) bool {
+        return self.grid[offset];
+    }
+
+    fn setAt(self: *Grid, offset: usize, v: bool) void {
+        self.grid[offset] = v;
+    }
+
+    fn reset(self: *Grid) void {
+        @memset(self.grid, false);
+    }
+
+    fn copyTo(self: Grid, other: *Grid) void {
+        @memcpy(other.grid, self.grid);
+    }
+};
+
+grid: Grid,
+grid_buf: Grid,
+
 width: usize,
 height: usize,
 generation: usize = 0,
 
-pub fn init(gpa: std.mem.Allocator, width: usize, height: usize) !Self {
+pub fn init(gpa: std.mem.Allocator, width: usize, height: usize) !Game {
     std.debug.assert(width > 0);
     std.debug.assert(height > 0);
 
     const grid = try gpa.alloc(bool, width * height);
     errdefer gpa.free(grid);
 
-    return Self{
-        .grid = grid,
+    const grid_buf = try gpa.alloc(bool, width * height);
+    errdefer gpa.free(grid_buf);
+
+    return Game{
+        .grid = .{ .grid = grid },
+        .grid_buf = .{ .grid = grid_buf },
         .width = width,
         .height = height,
     };
 }
 
-pub fn deinit(self: *Self, gpa: std.mem.Allocator) void {
-    gpa.free(self.grid);
+pub fn deinit(self: *Game, gpa: std.mem.Allocator) void {
+    gpa.free(self.grid.grid);
+    gpa.free(self.grid_buf.grid);
     self.* = undefined;
 }
 
-pub fn countNeighbors(self: Self, x: usize, y: usize) usize {
+pub fn countNeighbors(self: Game, x: usize, y: usize) usize {
     var count: usize = 0;
     for (&[_]isize{ -1, 0, 1 }) |xd| {
         for (&[_]isize{ -1, 0, 1 }) |yd| {
@@ -48,32 +75,26 @@ pub fn countNeighbors(self: Self, x: usize, y: usize) usize {
             if (target_x >= self.width) continue;
             if (target_y >= self.height) continue;
 
-            count += @intFromBool(self.at(target_x, target_y));
+            count += @intFromBool(self.grid.at(self.posToOffset(target_x, target_y)));
         }
     }
     return count;
 }
 
-pub fn at(self: Self, x: usize, y: usize) bool {
-    std.debug.assert(x < self.width);
-    std.debug.assert(y < self.height);
-    return self.grid[x + y * self.width];
-}
+pub fn live(self: *Game) void {
+    self.grid.copyTo(&self.grid_buf);
+    var buf = self.grid_buf;
+    defer std.mem.swap(Grid, &self.grid, &self.grid_buf);
 
-pub fn atMut(self: *Self, x: usize, y: usize) *bool {
-    std.debug.assert(x < self.width);
-    std.debug.assert(y < self.height);
-    return &self.grid[x + y * self.width];
-}
-
-pub fn live(self: *Self) void {
     self.generation += 1;
     var it = self.iterator();
     while (it.next()) |cell| {
         const neighbors = self.countNeighbors(cell.x, cell.y);
+        const offset = self.posToOffset(cell.x, cell.y);
+
         switch (neighbors) {
             0...1 => {
-                self.atMut(cell.x, cell.y).* = false;
+                buf.setAt(offset, false);
             },
             2 => {},
             3 => {
@@ -81,16 +102,16 @@ pub fn live(self: *Self) void {
                     continue;
                 }
 
-                self.atMut(cell.x, cell.y).* = true;
+                buf.setAt(offset, true);
             },
             else => {
-                self.atMut(cell.x, cell.y).* = false;
+                buf.setAt(offset, false);
             },
         }
     }
 }
 
-pub fn fill(self: *Self, seed: u64, percent: u7) void {
+pub fn fill(self: *Game, seed: u64, percent: u7) void {
     std.debug.assert(percent <= 100 and percent >= 0);
 
     var xoshiro = std.Random.Xoshiro256.init(seed);
@@ -103,17 +124,16 @@ pub fn fill(self: *Self, seed: u64, percent: u7) void {
         break :blk @intFromFloat(cells * fraction);
     };
     for (0..num) |_| {
-        const i = rng.uintLessThan(usize, self.grid.len);
+        const i = rng.uintLessThan(usize, self.len());
 
-        self.grid[i] = true;
+        self.grid.setAt(i, true);
     }
 }
 
-pub fn iterator(self: Self) Iterator {
+pub fn iterator(self: Game) Iterator {
     return .{
         .grid = self.grid,
         .width = self.width,
-        .height = self.height,
     };
 }
 
@@ -124,13 +144,12 @@ pub const Iterator = struct {
         alive: bool,
     };
 
-    grid: []bool,
+    grid: Grid,
     width: usize,
-    height: usize,
     offset: usize = 0,
 
     pub fn next(self: *@This()) ?Item {
-        if (self.offset >= self.grid.len) {
+        if (self.offset >= self.grid.grid.len) {
             return null;
         }
 
@@ -139,12 +158,27 @@ pub const Iterator = struct {
         return Item{
             .x = self.offset % self.width,
             .y = self.offset / self.width,
-            .alive = self.grid[self.offset],
+            .alive = self.grid.at(self.offset),
         };
     }
 };
 
-pub fn reset(self: *Self) void {
+pub fn reset(self: *Game) void {
     self.generation = 0;
-    @memset(self.grid, false);
+    self.grid.reset();
+}
+
+pub fn len(self: Game) usize {
+    return self.width * self.height;
+}
+
+pub fn at(self: Game, offset: usize) bool {
+    return self.grid.at(offset);
+}
+
+fn posToOffset(self: Game, x: usize, y: usize) usize {
+    std.debug.assert(x < self.width);
+    std.debug.assert(y < self.height);
+
+    return x + y * self.width;
 }
