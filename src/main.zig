@@ -219,3 +219,7 @@ pub const exports = struct {
         gpa.free(ptr[0..len]);
     }
 };
+
+comptime {
+    _ = @import("Game.zig");
+}

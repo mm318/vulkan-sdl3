@@ -184,3 +184,27 @@ fn posToOffset(self: Game, x: usize, y: usize) usize {
 
     return x + y * self.width;
 }
+
+const testing = std.testing;
+
+test "count neighbors wrapping" {
+    var game = try Game.init(testing.allocator, 3, 3);
+    defer game.deinit(testing.allocator);
+    game.reset();
+
+    for ([_]usize{ 0, 2, 6, 8 }) |i| {
+        game.grid.setAt(i, true);
+    }
+
+    try testing.expectEqual(3, game.countNeighbors(0, 0));
+    try testing.expectEqual(4, game.countNeighbors(1, 0));
+    try testing.expectEqual(3, game.countNeighbors(2, 0));
+
+    try testing.expectEqual(4, game.countNeighbors(0, 1));
+    try testing.expectEqual(4, game.countNeighbors(1, 1));
+    try testing.expectEqual(4, game.countNeighbors(2, 1));
+
+    try testing.expectEqual(3, game.countNeighbors(0, 2));
+    try testing.expectEqual(4, game.countNeighbors(1, 2));
+    try testing.expectEqual(3, game.countNeighbors(2, 2));
+}

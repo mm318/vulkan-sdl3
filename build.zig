@@ -23,6 +23,12 @@ pub fn build(b: *std.Build) void {
     });
     exe_mod.addImport("dvui", dvui_mod);
 
+    const exe_test_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     if (b.systemIntegrationOption("sdl3", .{})) {
         exe_mod.linkSystemLibrary("SDL3", .{});
     } else {
@@ -159,11 +165,11 @@ pub fn build(b: *std.Build) void {
         run_step.dependOn(&run_cmd.step);
     }
 
-    // const exe_unit_tests = b.addTest(.{ .root_module = exe_mod });
-    // const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
+    const exe_unit_tests = b.addTest(.{ .root_module = exe_test_mod });
+    const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
     const test_step = b.step("test", "Run unit tests");
-    // test_step.dependOn(&run_exe_unit_tests.step);
+    test_step.dependOn(&run_exe_unit_tests.step);
 
     if (benchmark) {
         const bench_mod = b.createModule(.{
