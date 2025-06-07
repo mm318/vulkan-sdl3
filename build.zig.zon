@@ -24,6 +24,11 @@
             .url = "https://github.com/david-vanderson/dvui/archive/f86119c8d01c5e58deffd78c1584adcaa775ee08.tar.gz",
             .hash = "dvui-0.2.0-AQFJmcttzQCUfpZ-1PqN5N9RVq9pW_gVvqjDxji2nZFF",
         },
+        .zbench = .{
+            .url = "https://github.com/hendriknielaender/zBench/archive/v0.10.0.tar.gz",
+            .hash = "zbench-0.10.0-YTdc714iAQDO4lTHMnIljYHPZ5v_sNTsw75vAmO1pyT-",
+            .lazy = true,
+        },
     },
     .paths = .{
         "build.zig",
