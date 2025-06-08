@@ -4,19 +4,19 @@ const Game = @This();
 const Grid = struct {
     grid: []bool,
 
-    fn at(self: Grid, offset: usize) bool {
+    inline fn at(self: Grid, offset: usize) bool {
         return self.grid[offset];
     }
 
-    fn setAt(self: *Grid, offset: usize, v: bool) void {
+    inline fn setAt(self: *Grid, offset: usize, v: bool) void {
         self.grid[offset] = v;
     }
 
-    fn reset(self: *Grid) void {
+    inline fn reset(self: *Grid) void {
         @memset(self.grid, false);
     }
 
-    fn copyTo(self: Grid, other: *Grid) void {
+    inline fn copyTo(self: Grid, other: *Grid) void {
         @memcpy(other.grid, self.grid);
     }
 };
@@ -57,36 +57,32 @@ pub fn countNeighbors(self: Game, x: usize, y: usize) usize {
     const height: isize = @intCast(self.height);
 
     var count: usize = 0;
-    for (&[_]isize{ -1, 0, 1 }) |xd| {
-        for (&[_]isize{ -1, 0, 1 }) |yd| {
+    inline for (&[_]isize{ -1, 0, 1 }) |xd| {
+        inline for (&[_]isize{ -1, 0, 1 }) |yd| {
             var target_x = @as(isize, @intCast(x)) + xd;
             target_x = std.math.wrap(target_x, width);
             if (target_x < 0) {
                 target_x = width + target_x;
-            } else if (target_x > width) {
-                target_x = @mod(target_x, width);
             }
 
             var target_y = @as(isize, @intCast(y)) + yd;
             target_y = std.math.wrap(target_y, height);
             if (target_y < 0) {
                 target_y = height + target_y;
-            } else if (target_y > height) {
-                target_y = @mod(target_y, height);
             }
 
-            if (target_x == x and target_y == y) continue;
-
-            count += @intFromBool(self.grid.at(self.posToOffset(@intCast(target_x), @intCast(target_y))));
+            if (!(target_x == x and target_y == y)) {
+                if (self.grid.at(self.posToOffset(@intCast(target_x), @intCast(target_y)))) count += 1;
+            }
         }
     }
+
     return count;
 }
 
 pub fn live(self: *Game) void {
-    self.grid.copyTo(&self.grid_buf);
-    var buf = self.grid_buf;
-    defer std.mem.swap(Grid, &self.grid, &self.grid_buf);
+    var buf = self.startGeneration();
+    defer self.endGeneration();
 
     self.generation += 1;
     var it = self.iterator();
@@ -183,6 +179,15 @@ fn posToOffset(self: Game, x: usize, y: usize) usize {
     std.debug.assert(y < self.height);
 
     return x + y * self.width;
+}
+
+fn startGeneration(self: *Game) Grid {
+    self.grid.copyTo(&self.grid_buf);
+    return self.grid_buf;
+}
+
+fn endGeneration(self: *Game) void {
+    std.mem.swap(Grid, &self.grid, &self.grid_buf);
 }
 
 const testing = std.testing;
