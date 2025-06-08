@@ -184,6 +184,12 @@ pub fn build(b: *std.Build) void {
             bench_mod.addImport("zbench", zbench.module("zbench"));
         }
 
+        const bench_exe = b.addExecutable(.{
+            .name = "bechmark",
+            .root_module = bench_mod,
+        });
+        b.installArtifact(bench_exe);
+
         const bench_tests = b.addTest(.{ .root_module = bench_mod });
         const run_bench_tests = b.addRunArtifact(bench_tests);
         test_step.dependOn(&run_bench_tests.step);

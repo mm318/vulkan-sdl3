@@ -22,3 +22,17 @@ test "benchmark" {
 fn benchLive(_: std.mem.Allocator) void {
     std.mem.doNotOptimizeAway(game.live());
 }
+
+pub fn main() !void {
+    const gpa = std.heap.smp_allocator;
+
+    game = try Game.init(gpa, 1280, 720);
+    defer game.deinit(gpa);
+
+    game.reset();
+    game.fill(0, 25);
+
+    for (0..100) |_| {
+        std.mem.doNotOptimizeAway(game.live());
+    }
+}
