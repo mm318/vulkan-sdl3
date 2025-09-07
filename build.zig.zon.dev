@@ -21,8 +21,7 @@
 
     .dependencies = .{
         .dvui = .{
-            .url = "https://github.com/mm318/dvui/archive/f1db1ed3bf9c2b7dfa8e2c44948ad5e39135375d.zip",
-            .hash = "dvui-0.4.0-dev-AQFJmZWj0QAy2yxuQKVyYuBFOLER9gk9wCHoqU-ZhrjS",
+            .path = "../dvui",
         },
         .zbench = .{
             .url = "https://github.com/hendriknielaender/zBench/archive/v0.11.1.tar.gz",

@@ -115,7 +115,7 @@ pub const exports = struct {
     }
 
     fn dvui_c_free(ptr: ?*anyopaque) callconv(.c) void {
-        const buffer = @as([*]align(8) u8, @alignCast(@ptrCast(ptr orelse return))) - 8;
+        const buffer = @as([*]align(8) u8, @ptrCast(@alignCast(ptr orelse return))) - 8;
         const len = std.mem.readInt(u64, buffer[0..@sizeOf(u64)], builtin.cpu.arch.endian());
         //log.debug("dvui_c_free {?*} {d}", .{ ptr, len - 8 });
 

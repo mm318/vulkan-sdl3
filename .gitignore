@@ -1,11 +1,11 @@
 ### zig ###
+
 # Zig programming language
-/.direnv
-/.zig-cache/
-/zig-cache/
-/zig-out/
-/build/
-/build-*/
-/docgen_tmp/
+.direnv
+.zig-cache/
+zig-out/
+build/
+build-*/
+docgen_tmp/
 
 /*.txt

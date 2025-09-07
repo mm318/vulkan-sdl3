@@ -12,10 +12,10 @@ const texture_width = width / 10;
 const texture_height = height / 10;
 
 fn logSdlInfo(log: anytype) void {
-    log.debug("SDL build time version: {}", .{sdl.buildTimeVersion()});
+    log.debug("SDL build time version: {f}", .{sdl.buildTimeVersion()});
     log.debug("SDL build time revision: {s}", .{sdl.c_main.SDL_REVISION});
 
-    log.debug("SDL runtime version: {}", .{sdl.runTimeVersion()});
+    log.debug("SDL runtime version: {f}", .{sdl.runTimeVersion()});
     const revision: [*:0]const u8 = c.SDL_GetRevision();
     log.debug("SDL runtime revision: {s}", .{revision});
 }
@@ -216,34 +216,34 @@ fn handleUi(state: *AppState) !void {
     {
         try ui.window.begin(std.time.nanoTimestamp());
 
-        var float = try dvui.floatingWindow(@src(), .{}, .{});
+        var float = dvui.floatingWindow(@src(), .{}, .{});
         defer float.deinit();
 
-        try dvui.windowHeader("Controls", "", null);
+        _ = dvui.windowHeader("Controls", "", null);
 
-        try dvui.label(@src(), "Generation: {d}", .{state.game.generation}, .{});
+        dvui.label(@src(), "Generation: {d}", .{state.game.generation}, .{});
 
-        try dvui.label(@src(), "Repeats: {d}", .{ui.normalizeRepeat()}, .{});
-        _ = try dvui.slider(@src(), .horizontal, &ui.repeat, .{
+        dvui.label(@src(), "Repeats: {d}", .{ui.normalizeRepeat()}, .{});
+        _ = dvui.slider(@src(), .horizontal, &ui.repeat, .{
             .expand = .horizontal,
         });
 
-        try dvui.label(@src(), "Wait time: {d} ms", .{ui.normalizeWait()}, .{});
-        _ = try dvui.slider(@src(), .horizontal, &ui.wait, .{
+        dvui.label(@src(), "Wait time: {d} ms", .{ui.normalizeWait()}, .{});
+        _ = dvui.slider(@src(), .horizontal, &ui.wait, .{
             .expand = .horizontal,
         });
 
-        if (try dvui.labelClick(@src(), "Seed: {d}", .{state.seed}, .{})) {
-            const str_seed = try std.fmt.allocPrintZ(arena, "{d}", .{state.seed});
+        if (dvui.labelClick(@src(), "Seed: {d}", .{state.seed}, .{}, .{})) {
+            const str_seed = try std.fmt.allocPrintSentinel(arena, "{d}", .{state.seed}, 0);
             defer arena.free(str_seed);
 
             try sdl.setClipboardText(str_seed);
         }
 
-        _ = try dvui.checkbox(@src(), &ui.randomize_seed, "Randomize seed?", .{});
+        _ = dvui.checkbox(@src(), &ui.randomize_seed, "Randomize seed?", .{});
 
         const custom_seed_len = if (!ui.randomize_seed) blk: {
-            const text_entry = try dvui.textEntry(@src(), .{
+            const text_entry = dvui.textEntry(@src(), .{
                 .placeholder = "custom seed",
                 .scroll_vertical = false,
                 .scroll_horizontal = true,
@@ -254,17 +254,17 @@ fn handleUi(state: *AppState) !void {
                 } },
             }, .{
                 .expand = .horizontal,
-                .color_border = if (ui.seed_text_valid) null else .{ .color = .{ .g = 0, .b = 0 } },
+                .color_border = if (ui.seed_text_valid) null else .{ .g = 0, .b = 0 },
             });
             text_entry.deinit();
 
             break :blk text_entry.len;
         } else 0;
 
-        try dvui.label(@src(), "Fill percent: {d:2}%", .{state.percent}, .{});
-        _ = try dvui.slider(@src(), .horizontal, &ui.percent_slider, .{ .expand = .horizontal });
+        dvui.label(@src(), "Fill percent: {d:2}%", .{state.percent}, .{});
+        _ = dvui.slider(@src(), .horizontal, &ui.percent_slider, .{ .expand = .horizontal });
 
-        if (try dvui.button(
+        if (dvui.button(
             @src(),
             "Start over",
             .{ .draw_focus = false },
@@ -290,12 +290,12 @@ fn handleUi(state: *AppState) !void {
 
         if (ui.window.cursorRequestedFloating()) |cursor| {
             // cursor is over floating window, dvui sets it
-            ui.backend.setCursor(cursor);
+            try ui.backend.setCursor(cursor);
         } else {
             // cursor should be handled by application
-            ui.backend.setCursor(.bad);
+            try ui.backend.setCursor(.bad);
         }
-        ui.backend.textInputRect(ui.window.textInputRequested());
+        try ui.backend.textInputRect(ui.window.textInputRequested());
     }
 
     _ = try ui.window.end(.{});
@@ -303,8 +303,8 @@ fn handleUi(state: *AppState) !void {
 
 fn queryAndSetTheme(state: *AppState) void {
     switch (sdl.getSystemTheme()) {
-        .light, .unknown => state.ui.window.theme = state.ui.window.themes.get("Adwaita Light").?,
-        .dark => state.ui.window.theme = state.ui.window.themes.get("Adwaita Dark").?,
+        .light, .unknown => state.ui.window.theme = dvui.Theme.builtin.adwaita_light,
+        .dark => state.ui.window.theme = dvui.Theme.builtin.adwaita_dark,
     }
 }
 

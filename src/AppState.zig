@@ -58,5 +58,5 @@ pub fn deinit(self: *AppState) void {
 }
 
 pub fn fromOpaque(appstate: ?*anyopaque) *AppState {
-    return @alignCast(@ptrCast(appstate.?));
+    return @ptrCast(@alignCast(appstate.?));
 }

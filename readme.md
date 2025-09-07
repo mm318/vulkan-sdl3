@@ -1,24 +1,10 @@
-# Game of Life Zig
+# Sample GPU Application
 
-This app uses Zig, SDL3 and DVUI and supports WEB target.
+This app uses Zig and Vulkan in the backend (and SDL3 and DVUI for the frontend).
 
-You can play it here <https://knightpp.codeberg.page/game-of-life-zig/@pages>.
-
-## Building
-
-### Web/Wasm
-
-`--sysroot` should be a path to emscripten sdk. You can activate flake's shell to get the `$SYSROOT`
-env var.
+## Building and Running
 
 ```shell
-zig build run -Dtarget=wasm32-emscripten --sysroot $SYSROOT --release=small
-# or
-zig build run -Dtarget=wasm64-emscripten --sysroot $SYSROOT --release=small
-```
-
-### Everything else
-
-```shell
-zig build
+zig build run                         # for debug build
+zig build -Doptimize=ReleaseSafe run  # for release build
 ```
