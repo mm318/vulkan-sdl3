@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const VulkanEngine = @import("vulkan/VulkanEngine.zig");
+const VulkanEngine = @import("vulkan_engine");
 
 var debug_allocator = std.heap.DebugAllocator(.{}).init;
 var gpa: ?std.mem.Allocator = null;
@@ -33,7 +33,7 @@ pub fn main() !void {
     // engine.load_textures();
     // engine.load_meshes();
     // engine.init_scene();
-    // engine.init_imgui();
+    engine.init_gui();
 
     engine.run();
 }

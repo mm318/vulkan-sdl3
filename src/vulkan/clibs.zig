@@ -448,11 +448,14 @@ pub const vma = struct {
 //
 pub const SDL = struct {
     pub const Window = c.SDL_Window;
+    pub const Renderer = c.SDL_Renderer;
     pub const Event = c.SDL_Event;
     pub const Bool = c.bool;
 
     pub const CreateWindow = c.SDL_CreateWindow;
     pub const DestroyWindow = c.SDL_DestroyWindow;
+    pub const CreateRenderer = c.SDL_CreateRenderer;
+    pub const DestroyRenderer = c.SDL_DestroyRenderer;
     pub const GetError = c.SDL_GetError;
     pub const GetWindowSize = c.SDL_GetWindowSize;
     pub const Init = c.SDL_Init;
@@ -484,5 +487,6 @@ pub const SDL = struct {
     // pub const TRUE = c.true;
     pub const WINDOW_FULLSCREEN = c.SDL_WINDOW_FULLSCREEN;
     pub const WINDOW_RESIZABLE = c.SDL_WINDOW_RESIZABLE;
+    pub const WINDOW_HIGH_PIXEL_DENSITY = c.SDL_WINDOW_HIGH_PIXEL_DENSITY;
     pub const WINDOW_VULKAN = c.SDL_WINDOW_VULKAN;
 };

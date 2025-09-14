@@ -1,9 +1,14 @@
 const std = @import("std");
+
 const c = @import("clibs.zig");
+
 const vki = @import("vulkan_init.zig");
 const check_vk = vki.check_vk;
 const mesh_mod = @import("mesh.zig");
 const Mesh = mesh_mod.Mesh;
+
+const dvui = @import("dvui");
+const DvuiBackend = dvui.backend;
 
 const math3d = @import("math3d.zig");
 const Vec2 = math3d.Vec2;
@@ -90,6 +95,7 @@ selected_shader: i32 = 0,
 selected_mesh: i32 = 0,
 
 window: *c.SDL.Window = undefined,
+renderer: *c.SDL.Renderer = undefined,
 
 // Keep this around for long standing allocations
 allocator: std.mem.Allocator = undefined,
@@ -148,6 +154,9 @@ camera_input: Vec3 = Vec3.make(0.0, 0.0, 0.0),
 deletion_queue: std.ArrayList(VulkanDeleter) = undefined,
 buffer_deletion_queue: std.ArrayList(VmaBufferDeleter) = undefined,
 image_deletion_queue: std.ArrayList(VmaImageDeleter) = undefined,
+
+dvui_backend: ?DvuiBackend = null,
+dvui_window: ?dvui.Window = null,
 
 pub const MeshPushConstants = struct {
     data: Vec4,
@@ -209,13 +218,19 @@ pub fn init(a: std.mem.Allocator) Self {
         "Vulkan",
         window_extent.width,
         window_extent.height,
-        c.SDL.WINDOW_VULKAN | c.SDL.WINDOW_RESIZABLE,
+        c.SDL.WINDOW_VULKAN | c.SDL.WINDOW_HIGH_PIXEL_DENSITY | c.SDL.WINDOW_RESIZABLE,
     ) orelse @panic("Failed to create SDL window");
+
+    // const renderer = c.SDL.CreateRenderer(window, null) orelse {
+    //     std.debug.print("Failed to create renderer: {s}\n", .{c.SDL.GetError()});
+    //     @panic("Failed to create SDL window");
+    // };
 
     _ = c.SDL.ShowWindow(window);
 
     var engine = Self{
         .window = window,
+        // .renderer = renderer,
         .allocator = a,
         .deletion_queue = std.ArrayList(VulkanDeleter){},
         .buffer_deletion_queue = std.ArrayList(VmaBufferDeleter){},
@@ -1342,6 +1357,14 @@ fn init_scene(self: *Self) void {
     }
 }
 
+pub fn init_gui(self: *Self) void {
+    // create SDL backend using existing window and renderer, app still owns the window/renderer
+    self.dvui_backend = DvuiBackend.init(@ptrCast(self.window), @ptrCast(self.renderer));
+
+    // init dvui Window (maps onto a single OS window)
+    self.dvui_window = dvui.Window.init(@src(), self.allocator, self.dvui_backend.?.backend(), .{}) catch @panic("Failed to create DVUI window");
+}
+
 pub fn cleanup(self: *Self) void {
     check_vk(c.vk.DeviceWaitIdle(self.device)) catch @panic("Failed to wait for device idle");
 
@@ -1391,7 +1414,16 @@ pub fn cleanup(self: *Self) void {
     }
 
     c.vk.DestroyInstance(self.instance, vk_alloc_cbs);
+    c.SDL.DestroyRenderer(self.renderer);
     c.SDL.DestroyWindow(self.window);
+    c.SDL.Quit();
+
+    if (self.dvui_window) |*dvui_window| {
+        dvui_window.deinit();
+    }
+    if (self.dvui_backend) |*dvui_backend| {
+        dvui_backend.deinit();
+    }
 }
 
 fn load_textures(self: *Self) void {
