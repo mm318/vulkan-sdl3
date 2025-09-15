@@ -584,8 +584,7 @@ pub fn begin(self: *Self) void {
     dev.cmdPushConstants(cmdbuf, self.pipeline_layout, .{ .vertex_bit = true }, 0, @sizeOf(PushConstants), &push_constants);
 }
 
-pub fn end(_: *Backend) void {
-}
+pub fn end(_: *Backend) void {}
 pub fn pixelSize(self: *Backend) Size {
     // return self.base_backend.pixelSize();
     return .{ .w = @floatFromInt(self.framebuffer_size.width), .h = @floatFromInt(self.framebuffer_size.height) };

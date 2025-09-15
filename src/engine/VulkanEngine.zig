@@ -1,8 +1,8 @@
 const std = @import("std");
 
-const c = @import("clibs.zig");
+const c = @import("vulkan").c;
 
-const vki = @import("vulkan_init.zig");
+const vki = @import("vulkan");
 const check_vk = vki.check_vk;
 const mesh_mod = @import("mesh.zig");
 const Mesh = mesh_mod.Mesh;

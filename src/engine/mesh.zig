@@ -1,7 +1,7 @@
 const std = @import("std");
 const AllocatedBuffer = @import("VulkanEngine.zig").AllocatedBuffer;
 const m3d = @import("math3d.zig");
-const c = @import("clibs.zig");
+const c = @import("vulkan").c;
 
 const Vec2 = m3d.Vec2;
 const Vec3 = m3d.Vec3;

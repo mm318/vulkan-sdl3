@@ -137,7 +137,13 @@ pub fn contentScale(self: *SDLBackend) f32 {
     return self.initial_scale;
 }
 
-pub fn drawClippedTriangles(self: *SDLBackend, texture: ?dvui.Texture, vtx: []const dvui.Vertex, idx: []const u16, maybe_clipr: ?dvui.Rect.Physical,) !void {
+pub fn drawClippedTriangles(
+    self: *SDLBackend,
+    texture: ?dvui.Texture,
+    vtx: []const dvui.Vertex,
+    idx: []const u16,
+    maybe_clipr: ?dvui.Rect.Physical,
+) !void {
     //std.debug.print("drawClippedTriangles:\n", .{});
     //for (vtx) |v, i| {
     //  std.debug.print("  {d} vertex {}\n", .{i, v});
@@ -205,7 +211,13 @@ pub fn drawClippedTriangles(self: *SDLBackend, texture: ?dvui.Texture, vtx: []co
     }
 }
 
-pub fn textureCreate(self: *SDLBackend, pixels: [*]const u8, width: u32, height: u32, interpolation: dvui.enums.TextureInterpolation,) !dvui.Texture {
+pub fn textureCreate(
+    self: *SDLBackend,
+    pixels: [*]const u8,
+    width: u32,
+    height: u32,
+    interpolation: dvui.enums.TextureInterpolation,
+) !dvui.Texture {
     const surface = c.SDL_CreateSurfaceFrom(
         @as(c_int, @intCast(width)),
         @as(c_int, @intCast(height)),
@@ -224,7 +236,14 @@ pub fn textureCreate(self: *SDLBackend, pixels: [*]const u8, width: u32, height:
         .linear => c.SDL_SetTextureScaleMode(texture, c.SDL_SCALEMODE_LINEAR),
     }, "SDL_SetTextureScaleMode in textureCreates");
 
-    const pma_blend = c.SDL_ComposeCustomBlendMode(c.SDL_BLENDFACTOR_ONE, c.SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, c.SDL_BLENDOPERATION_ADD, c.SDL_BLENDFACTOR_ONE, c.SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, c.SDL_BLENDOPERATION_ADD,);
+    const pma_blend = c.SDL_ComposeCustomBlendMode(
+        c.SDL_BLENDFACTOR_ONE,
+        c.SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+        c.SDL_BLENDOPERATION_ADD,
+        c.SDL_BLENDFACTOR_ONE,
+        c.SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+        c.SDL_BLENDOPERATION_ADD,
+    );
     try toErr(c.SDL_SetTextureBlendMode(texture, pma_blend), "SDL_SetTextureBlendMode in textureCreate");
     return dvui.Texture{ .ptr = texture, .width = width, .height = height };
 }
@@ -249,7 +268,14 @@ pub fn textureCreateTarget(self: *SDLBackend, width: u32, height: u32, interpola
         .linear => c.SDL_SetTextureScaleMode(texture, c.SDL_SCALEMODE_LINEAR),
     }, "SDL_SetTextureScaleMode in textureCreates");
 
-    const pma_blend = c.SDL_ComposeCustomBlendMode(c.SDL_BLENDFACTOR_ONE, c.SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, c.SDL_BLENDOPERATION_ADD, c.SDL_BLENDFACTOR_ONE, c.SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, c.SDL_BLENDOPERATION_ADD,);
+    const pma_blend = c.SDL_ComposeCustomBlendMode(
+        c.SDL_BLENDFACTOR_ONE,
+        c.SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+        c.SDL_BLENDOPERATION_ADD,
+        c.SDL_BLENDFACTOR_ONE,
+        c.SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+        c.SDL_BLENDOPERATION_ADD,
+    );
     try toErr(
         c.SDL_SetTextureBlendMode(texture, pma_blend),
         "SDL_SetTextureBlendMode in textureCreateTarget",

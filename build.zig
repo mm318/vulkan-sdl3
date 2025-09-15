@@ -19,27 +19,35 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const vulkan_mod = b.createModule(.{
+        .root_source_file = b.path("src/vulkan/vulkan_init.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    vulkan_mod.linkLibrary(sdl3_dep.artifact("SDL3"));
+    vulkan_mod.addIncludePath(b.path("src/vulkan/"));
+    vulkan_mod.addCSourceFile(.{ .file = b.path("src/vulkan/vk_mem_alloc.cpp") });
+
     const dvui_backend_mod = b.createModule(.{
         .root_source_file = b.path("src/dvui_backend/sdl3_vk.zig"),
         .target = target,
         .optimize = optimize,
     });
-    dvui_backend_mod.linkLibrary(sdl3_dep.artifact("SDL3"));
+    dvui_backend_mod.addIncludePath(sdl3_dep.artifact("SDL3").getEmittedIncludeTree());
+    dvui_backend_mod.addImport("vulkan", vulkan_mod);
 
     const dvui_mod = dvui_dep.module("dvui");
     @import("dvui").linkBackend(dvui_mod, dvui_backend_mod);
 
-    const vulkan_engine_mod = b.createModule(.{
-        .root_source_file = b.path("src/vulkan/VulkanEngine.zig"),
+    const engine_mod = b.createModule(.{
+        .root_source_file = b.path("src/engine/VulkanEngine.zig"),
         .target = target,
         .optimize = optimize,
     });
-    compile_all_shaders(b, vulkan_engine_mod);
-    vulkan_engine_mod.linkLibrary(sdl3_dep.artifact("SDL3"));
-    vulkan_engine_mod.addImport("dvui", dvui_mod);
-    vulkan_engine_mod.addImport("dvui_backend", dvui_backend_mod);
-    vulkan_engine_mod.addIncludePath(b.path("src/vulkan/"));
-    vulkan_engine_mod.addCSourceFile(.{ .file = b.path("src/vulkan/vk_mem_alloc.cpp") });
+    engine_mod.addImport("vulkan", vulkan_mod);
+    engine_mod.addImport("dvui", dvui_mod);
+    engine_mod.addImport("dvui_backend", dvui_backend_mod);
+    compile_all_shaders(b, engine_mod);
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/app/main.zig"),
@@ -47,7 +55,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = target.result.os.tag == .emscripten,
     });
-    exe_mod.addImport("vulkan_engine", vulkan_engine_mod);
+    exe_mod.addImport("vulkan_engine", engine_mod);
 
     const exe = b.addExecutable(.{
         .name = "game_of_life",
