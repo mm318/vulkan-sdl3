@@ -33,7 +33,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    dvui_backend_mod.addIncludePath(sdl3_dep.artifact("SDL3").getEmittedIncludeTree());
     dvui_backend_mod.addImport("vulkan", vulkan_mod);
 
     const dvui_mod = dvui_dep.module("dvui");
