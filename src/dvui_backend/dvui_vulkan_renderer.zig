@@ -387,38 +387,40 @@ pub fn init(alloc: std.mem.Allocator, opt: InitOptions) !Self {
 
     const samplers_ci = [_]c.vk.SamplerCreateInfo{
         .{ // dvui.TextureInterpolation.nearest
-            .mag_filter = .nearest,
-            .min_filter = .nearest,
-            .mipmap_mode = .nearest,
-            .address_mode_u = opt.texture_wrap,
-            .address_mode_v = opt.texture_wrap,
-            .address_mode_w = opt.texture_wrap,
-            .mip_lod_bias = 0,
-            .anisotropy_enable = .false,
-            .max_anisotropy = 0,
-            .compare_enable = .false,
-            .compare_op = .always,
-            .min_lod = 0,
-            .max_lod = c.vk.LOD_CLAMP_NONE,
-            .border_color = .int_opaque_white,
-            .unnormalized_coordinates = .false,
+            .sType = c.vk.STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .magFilter = c.vk.FILTER_NEAREST,
+            .minFilter = c.vk.FILTER_NEAREST,
+            .mipmapMode = c.vk.SAMPLER_MIPMAP_MODE_NEAREST,
+            .addressModeU = opt.texture_wrap,
+            .addressModeV = opt.texture_wrap,
+            .addressModeW = opt.texture_wrap,
+            .mipLodBias = 0,
+            .anisotropyEnable = c.vk.FALSE,
+            .maxAnisotropy = 0,
+            .compareEnable = c.vk.FALSE,
+            .compareOp = c.vk.COMPARE_OP_ALWAYS,
+            .minLod = 0,
+            .maxLod = c.vk.LOD_CLAMP_NONE,
+            .borderColor = c.vk.BORDER_COLOR_INT_OPAQUE_WHITE,
+            .unnormalizedCoordinates = c.vk.FALSE,
         },
         .{ // dvui.TextureInterpolation.linear
-            .mag_filter = .linear,
-            .min_filter = .linear,
-            .mipmap_mode = .linear,
-            .address_mode_u = opt.texture_wrap,
-            .address_mode_v = opt.texture_wrap,
-            .address_mode_w = opt.texture_wrap,
-            .mip_lod_bias = 0,
-            .anisotropy_enable = .false,
-            .max_anisotropy = 0,
-            .compare_enable = .false,
-            .compare_op = .always,
-            .min_lod = 0,
-            .max_lod = c.vk.LOD_CLAMP_NONE,
-            .border_color = .int_opaque_white,
-            .unnormalized_coordinates = .false,
+            .sType = c.vk.STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .magFilter = c.vk.FILTER_LINEAR,
+            .minFilter = c.vk.FILTER_LINEAR,
+            .mipmapMode = c.vk.SAMPLER_MIPMAP_MODE_LINEAR,
+            .addressModeU = opt.texture_wrap,
+            .addressModeV = opt.texture_wrap,
+            .addressModeW = opt.texture_wrap,
+            .mipLodBias = 0,
+            .anisotropyEnable = c.vk.FALSE,
+            .maxAnisotropy = 0,
+            .compareEnable = c.vk.FALSE,
+            .compareOp = c.vk.COMPARE_OP_ALWAYS,
+            .minLod = 0,
+            .maxLod = c.vk.LOD_CLAMP_NONE,
+            .borderColor = c.vk.BORDER_COLOR_INT_OPAQUE_WHITE,
+            .unnormalizedCoordinates = c.vk.FALSE,
         },
     };
     var samplers: [2]c.vk.Sampler = undefined;
@@ -973,6 +975,7 @@ fn createPipeline(
     };
 
     const pvisci = c.vk.PipelineVertexInputStateCreateInfo{
+        .sType = c.vk.STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
         .vertexBindingDescriptionCount = VertexBindings.binding_description.len,
         .pVertexBindingDescriptions = &VertexBindings.binding_description,
         .vertexAttributeDescriptionCount = VertexBindings.attribute_description.len,
@@ -996,6 +999,7 @@ fn createPipeline(
     });
 
     const prsci = std.mem.zeroInit(c.vk.PipelineRasterizationStateCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
         .depthClampEnable = c.vk.FALSE,
         .rasterizerDiscardEnable = c.vk.FALSE,
         .polygonMode = c.vk.POLYGON_MODE_FILL,
@@ -1054,12 +1058,14 @@ fn createPipeline(
         c.vk.DYNAMIC_STATE_SCISSOR,
     };
     const pdsci = c.vk.PipelineDynamicStateCreateInfo{
+        .sType = c.vk.STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
         .flags = 0,
         .dynamicStateCount = dynstate.len,
         .pDynamicStates = &dynstate,
     };
 
     const gpci = c.vk.GraphicsPipelineCreateInfo{
+        .sType = c.vk.STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
         .flags = 0,
         .stageCount = pssci.len,
         .pStages = &pssci,
