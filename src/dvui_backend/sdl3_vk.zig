@@ -20,7 +20,7 @@ last_pixel_size: dvui.Size.Physical = .{ .w = 800, .h = 600 },
 last_window_size: dvui.Size.Natural = .{ .w = 800, .h = 600 },
 arena: std.mem.Allocator = undefined,
 
-pub fn init(alloc: std.mem.Allocator, window: *c.SDL_Window, options: DvuiVkRenderer) SDLBackend {
+pub fn init(alloc: std.mem.Allocator, window: *c.SDL.Window, options: DvuiVkRenderer.InitOptions) SDLBackend {
     // init on top of already initialized backend, overrides rendering
     const dvui_vk_backend = DvuiVkRenderer.init(alloc, options) catch @panic("unable to initialize DvuiVkRenderer");
     return SDLBackend{ .window = window, .renderer = dvui_vk_backend };
@@ -88,13 +88,15 @@ pub fn begin(self: *SDLBackend, arena: std.mem.Allocator) !void {
 pub fn end(_: *SDLBackend) !void {}
 
 pub fn pixelSize(self: *SDLBackend) dvui.Size.Physical {
-    var w: i32 = undefined;
-    var h: i32 = undefined;
-    toErr(
-        c.SDL.GetCurrentRenderOutputSize(self.renderer, &w, &h),
-        "SDL_GetCurrentRenderOutputSize in pixelSize",
-    ) catch return self.last_pixel_size;
-    self.last_pixel_size = .{ .w = @as(f32, @floatFromInt(w)), .h = @as(f32, @floatFromInt(h)) };
+    // var w: i32 = undefined;
+    // var h: i32 = undefined;
+    // toErr(
+    //     c.SDL.GetCurrentRenderOutputSize(self.renderer, &w, &h),
+    //     "SDL_GetCurrentRenderOutputSize in pixelSize",
+    // ) catch return self.last_pixel_size;
+
+    const last_pixel_size = self.renderer.pixelSize();
+    self.last_pixel_size = .{ .w = last_pixel_size.w, .h = last_pixel_size.h };
     return self.last_pixel_size;
 }
 

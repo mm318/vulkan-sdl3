@@ -566,7 +566,7 @@ fn init_default_renderpass(self: *Self) void {
         .subpassCount = 1,
         .pSubpasses = &subpass,
         .dependencyCount = @as(u32, @intCast(dependecies.len)),
-        .pDependencies = &dependecies[0],
+        .pDependencies = &dependecies,
     });
 
     check_vk(c.vk.CreateRenderPass(self.device, &render_pass_create_info, vk_alloc_cbs, &self.render_pass)) catch @panic("Failed to create render pass");
@@ -592,7 +592,7 @@ fn init_framebuffers(self: *Self) void {
             view,
             self.depth_image_view,
         };
-        framebuffer_ci.pAttachments = &attachements[0];
+        framebuffer_ci.pAttachments = &attachements;
         check_vk(c.vk.CreateFramebuffer(self.device, &framebuffer_ci, vk_alloc_cbs, framebuffer)) catch @panic("Failed to create framebuffer");
         self.deletion_queue.append(
             self.allocator,
@@ -904,7 +904,7 @@ fn init_pipelines(self: *Self) void {
     const mesh_pipeline_layout_ci = std.mem.zeroInit(c.vk.PipelineLayoutCreateInfo, .{
         .sType = c.vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = @as(u32, @intCast(set_layouts.len)),
-        .pSetLayouts = &set_layouts[0],
+        .pSetLayouts = &set_layouts,
         .pushConstantRangeCount = 1,
         .pPushConstantRanges = &push_constant_range,
     });
@@ -939,7 +939,7 @@ fn init_pipelines(self: *Self) void {
         self.single_texture_set_layout,
     };
     textured_pipe_layout_ci.setLayoutCount = @as(u32, @intCast(textured_set_layoyts.len));
-    textured_pipe_layout_ci.pSetLayouts = &textured_set_layoyts[0];
+    textured_pipe_layout_ci.pSetLayouts = &textured_set_layoyts;
 
     var textured_pipe_layout: c.vk.PipelineLayout = undefined;
     check_vk(c.vk.CreatePipelineLayout(self.device, &textured_pipe_layout_ci, vk_alloc_cbs, &textured_pipe_layout)) catch @panic("Failed to create textured mesh pipeline layout");
@@ -989,7 +989,7 @@ fn init_descriptors(self: *Self) void {
         .flags = 0,
         .maxSets = 10,
         .poolSizeCount = @as(u32, @intCast(pool_sizes.len)),
-        .pPoolSizes = &pool_sizes[0],
+        .pPoolSizes = &pool_sizes,
     });
 
     check_vk(c.vk.CreateDescriptorPool(self.device, &pool_ci, vk_alloc_cbs, &self.descriptor_pool)) catch @panic("Failed to create descriptor pool");
@@ -1031,7 +1031,7 @@ fn init_descriptors(self: *Self) void {
     const global_set_ci = std.mem.zeroInit(c.vk.DescriptorSetLayoutCreateInfo, .{
         .sType = c.vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .bindingCount = @as(u32, @intCast(bindings.len)),
-        .pBindings = &bindings[0],
+        .pBindings = &bindings,
     });
 
     check_vk(c.vk.CreateDescriptorSetLayout(self.device, &global_set_ci, vk_alloc_cbs, &self.global_set_layout)) catch @panic("Failed to create global descriptor set layout");
@@ -1132,7 +1132,7 @@ fn init_descriptors(self: *Self) void {
         scene_parameters_write,
     };
 
-    c.vk.UpdateDescriptorSets(self.device, @as(u32, @intCast(camera_and_scene_writes.len)), &camera_and_scene_writes[0], 0, null);
+    c.vk.UpdateDescriptorSets(self.device, @as(u32, @intCast(camera_and_scene_writes.len)), &camera_and_scene_writes, 0, null);
 
     // =================================
     // Texture set layout
@@ -1214,7 +1214,7 @@ fn init_descriptors(self: *Self) void {
             object_buffer_write,
         };
 
-        c.vk.UpdateDescriptorSets(self.device, @as(u32, @intCast(writes.len)), &writes[0], 0, null);
+        c.vk.UpdateDescriptorSets(self.device, @as(u32, @intCast(writes.len)), &writes, 0, null);
     }
 }
 
@@ -1359,25 +1359,32 @@ pub fn init_gui(self: *Self) void {
     const max_frames_in_flight = 3;
 
     // create SDL backend using existing window and renderer, app still owns the window/renderer
-    self.dvui_backend = DvuiBackend.init(self.allocator, @ptrCast(self.sdl_window), .{
-        .max_frames_in_flight = max_frames_in_flight,
-        // .vkGetDeviceProcAddr = ctx.instance.wrapper.dispatch.vkGetDeviceProcAddr.?,
-        .dev = self.device,
-        .pdev = self.physical_device,
-        .render_pass = self.render_pass,
-        .queue = self.graphics_queue,   // or should it be self.present_queue
-        .command_pool = self.upload_context.command_pool,
-        // tight limits
-        .max_indices_per_frame = 1024 * 96,
-        .max_vertices_per_frame = 1024 * 32,
-        // test overflow
-        // .max_indices_per_frame = 1024 * 32,
-        // .max_vertices_per_frame = 1024 * 16,
-    },);
+    self.dvui_backend = DvuiBackend.init(
+        self.allocator,
+        @ptrCast(self.sdl_window),
+        .{
+            .dev = self.device,
+            .queue = self.graphics_queue, // or should it be self.present_queue
+            .command_pool = self.upload_context.command_pool,
+            .pdev = self.physical_device,
+            .render_pass = self.render_pass,
+            .vk_alloc = vk_alloc_cbs,
+
+            .max_frames_in_flight = max_frames_in_flight,
+
+            // tight limits
+            .max_indices_per_frame = 1024 * 96,
+            .max_vertices_per_frame = 1024 * 32,
+
+            // test overflow
+            // .max_indices_per_frame = 1024 * 32,
+            // .max_vertices_per_frame = 1024 * 16,
+        },
+    );
 
     // init dvui Window (maps onto a single OS window)
     self.dvui_window = dvui.Window.init(@src(), self.allocator, self.dvui_backend.?.backend(), .{}) catch @panic("Failed to create DVUI window");
-    self.dvui_window.theme = dvui.Theme.builtin.adwaita_dark;
+    self.dvui_window.?.theme = dvui.Theme.builtin.adwaita_dark;
 }
 
 pub fn cleanup(self: *Self) void {
@@ -1429,7 +1436,6 @@ pub fn cleanup(self: *Self) void {
     }
 
     c.vk.DestroyInstance(self.instance, vk_alloc_cbs);
-    c.SDL.DestroyRenderer(self.renderer);
     c.SDL.DestroyWindow(self.sdl_window);
     c.SDL.Quit();
 
@@ -1779,7 +1785,7 @@ fn draw(self: *Self) void {
             .extent = self.swapchain_extent,
         },
         .clearValueCount = @as(u32, @intCast(clear_values.len)),
-        .pClearValues = &clear_values[0],
+        .pClearValues = &clear_values,
     });
     c.vk.CmdBeginRenderPass(cmd, &render_pass_begin_info, c.vk.SUBPASS_CONTENTS_INLINE);
 
@@ -1888,7 +1894,7 @@ fn draw_objects(self: *Self, cmd: c.vk.CommandBuffer, objects: []RenderObject) v
                 1,
                 &self.camera_and_scene_set,
                 @as(u32, @intCast(uniform_offsets.len)),
-                &uniform_offsets[0],
+                &uniform_offsets,
             );
 
             c.vk.CmdBindDescriptorSets(

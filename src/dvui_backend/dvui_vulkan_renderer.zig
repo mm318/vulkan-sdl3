@@ -39,7 +39,7 @@ const Backend = Self;
 pub const Vertex = dvui.Vertex;
 pub const Indice = u16;
 pub const invalid_texture: *anyopaque = @ptrFromInt(0xBAD0BAD0); //@ptrFromInt(0xFFFF_FFFF);
-pub const img_format = c.vk.Format.r8g8b8a8_unorm; // format for textures
+pub const img_format = c.vk.FORMAT_R8G8B8A8_UNORM; // format for textures
 pub const TextureIdx = u16;
 
 // debug flags
@@ -62,7 +62,7 @@ pub const InitOptions = struct {
     /// vulkan physical device
     pdev: c.vk.PhysicalDevice,
     /// physical device memory properties
-    mem_props: c.vk.PhysicalDeviceMemoryProperties,
+    // mem_props: c.vk.PhysicalDeviceMemoryProperties,
     /// render pass from which renderer will be used
     render_pass: c.vk.RenderPass,
     /// optional vulkan host side allocator
@@ -91,7 +91,7 @@ pub const InitOptions = struct {
     error_texture_color: [4]u8 = [4]u8{ 255, 0, 255, 255 }, // default bright pink so its noticeable for debug, can be set to alpha 0 for invisible etc.
 
     /// if uv coords go out of bounds, how should the sampling behave
-    texture_wrap: c.vk.SamplerAddressMode = .repeat,
+    texture_wrap: c.vk.SamplerAddressMode = c.vk.SAMPLER_ADDRESS_MODE_REPEAT,
 
     /// bytes - total host visible memory allocated ahead of time
     pub inline fn hostVisibleMemSize(s: @This()) u32 {
@@ -130,11 +130,11 @@ var g_dev_wrapper: c.vk.DeviceWrapper = undefined;
 dev: c.vk.Device,
 pdev: c.vk.PhysicalDevice,
 vk_alloc: ?*c.vk.AllocationCallbacks,
-cmdbuf: c.vk.CommandBuffer = .null_handle,
+cmdbuf: c.vk.CommandBuffer = null,
 dpool: c.vk.DescriptorPool,
-queue: c.vk.Queue = .null_handle,
+queue: c.vk.Queue = null,
 queue_lock: ?LockCallbacks = null,
-cpool: c.vk.CommandPool = .null_handle,
+cpool: c.vk.CommandPool = null,
 cpool_lock: ?LockCallbacks = null,
 
 // owned by us
@@ -176,10 +176,10 @@ const LockCallbacks = struct {
 
 const FrameData = struct {
     // buffers to host_vis memory
-    vtx_buff: c.vk.Buffer = .null_handle,
+    vtx_buff: c.vk.Buffer = null,
     vtx_data: []u8 = &.{},
     vtx_offset: u32 = 0,
-    idx_buff: c.vk.Buffer = .null_handle,
+    idx_buff: c.vk.Buffer = null,
     idx_data: []u8 = &.{},
     idx_offset: u32 = 0,
     /// textures to be destroyed after frames cycle through
@@ -210,10 +210,10 @@ const FrameData = struct {
 
             //slog.debug("destroy texture {}({x}) | {}", .{ tidx, @intFromPtr(&b.textures[tidx]), b.stats.textures_alive });
             b.textures[tidx].deinit(b);
-            b.textures[tidx].img = .null_handle;
-            b.textures[tidx].dset = .null_handle;
-            b.textures[tidx].img_view = .null_handle;
-            b.textures[tidx].mem = .null_handle;
+            b.textures[tidx].img = null;
+            b.textures[tidx].dset = null;
+            b.textures[tidx].img_view = null;
+            b.textures[tidx].mem = null;
             b.textures[tidx].trace.addAddr(@returnAddress(), "destroy"); // keep tracing
         }
         f.destroy_textures_len = 0;
@@ -229,16 +229,18 @@ pub fn init(alloc: std.mem.Allocator, opt: InitOptions) !Self {
     var host_coherent: bool = false;
     const host_vis_mem_type_index: u32 = blk: {
         // device local, host visible
-        for (mem_props.memory_types[0..mem_props.memory_type_count], 0..) |mem_type, i|
-            if (mem_type.property_flags.device_local_bit and mem_type.property_flags.host_visible_bit) {
-                host_coherent = mem_type.property_flags.host_coherent_bit;
+        for (mem_props.memoryTypes[0..mem_props.memoryTypeCount], 0..) |mem_type, i|
+            if ((mem_type.propertyFlags & c.vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0 and
+                (mem_type.propertyFlags & c.vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0)
+            {
+                host_coherent = (mem_type.propertyFlags & c.vk.MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
                 slog.debug("chosen host_visible_mem: {} {}", .{ i, mem_type });
                 break :blk @truncate(i);
             };
         // not device local
-        for (mem_props.memory_types[0..mem_props.memory_type_count], 0..) |mem_type, i|
-            if (mem_type.property_flags.host_visible_bit) {
-                host_coherent = mem_type.property_flags.host_coherent_bit;
+        for (mem_props.memoryTypes[0..mem_props.memoryTypeCount], 0..) |mem_type, i|
+            if ((mem_type.propertyFlags & c.vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) {
+                host_coherent = (mem_type.propertyFlags & c.vk.MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0;
                 slog.info("chosen host_visible_mem is NOT device local - Are we running on integrated graphics?", .{});
                 slog.debug("chosen host_visible_mem: {} {}", .{ i, mem_type });
                 break :blk @truncate(i);
@@ -253,8 +255,8 @@ pub fn init(alloc: std.mem.Allocator, opt: InitOptions) !Self {
         .memoryTypeIndex = host_vis_mem_type_index,
     });
     var host_visible_mem: c.vk.DeviceMemory = undefined;
-    try check_vk(c.vk.AllocateMemory(opt.dev, &memory_ai, &host_visible_mem));
-    errdefer c.vk.FreeMemory(host_visible_mem);
+    try check_vk(c.vk.AllocateMemory(opt.dev, &memory_ai, opt.vk_alloc, &host_visible_mem));
+    errdefer c.vk.FreeMemory(opt.dev, host_visible_mem, opt.vk_alloc);
 
     var data: ?*anyopaque = undefined;
     try check_vk(c.vk.MapMemory(opt.dev, host_visible_mem, 0, c.vk.WHOLE_SIZE, 0, &data));
@@ -262,8 +264,10 @@ pub fn init(alloc: std.mem.Allocator, opt: InitOptions) !Self {
 
     // device local mem
     const device_local_mem_idx: u32 = blk: {
-        for (mem_props.memory_types[0..mem_props.memory_type_count], 0..) |mem_type, i|
-            if (mem_type.property_flags.device_local_bit and !mem_type.property_flags.host_visible_bit) {
+        for (mem_props.memoryTypes[0..mem_props.memoryTypeCount], 0..) |mem_type, i|
+            if ((mem_type.propertyFlags & c.vk.MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0 and
+                (mem_type.propertyFlags & c.vk.MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0)
+            {
                 slog.debug("chosen device local mem: {} {}", .{ i, mem_type });
                 break :blk @truncate(i);
             };
@@ -279,29 +283,41 @@ pub fn init(alloc: std.mem.Allocator, opt: InitOptions) !Self {
             f.* = .{};
             // TODO: on error here cleanup will leak previous initialized frames
             { // vertex buf
-                const buf = try dev.createBuffer(&.{
+                const buffer_ci = std.mem.zeroInit(c.vk.BufferCreateInfo, .{
+                    .sType = c.vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
                     .size = @sizeOf(Vertex) * opt.max_vertices_per_frame,
-                    .usage = .{ .vertex_buffer_bit = true },
-                    .sharing_mode = .exclusive,
-                }, opt.vk_alloc);
-                errdefer dev.destroyBuffer(buf, opt.vk_alloc);
-                const mreq = dev.getBufferMemoryRequirements(buf);
+                    .usage = c.vk.BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                    .sharingMode = c.vk.SHARING_MODE_EXCLUSIVE,
+                });
+                var buf: c.vk.Buffer = undefined;
+                try check_vk(c.vk.CreateBuffer(opt.dev, &buffer_ci, opt.vk_alloc, &buf));
+                errdefer c.vk.DestroyBuffer(opt.dev, buf, opt.vk_alloc);
+
+                var mreq: c.vk.MemoryRequirements = undefined;
+                c.vk.GetBufferMemoryRequirements(opt.dev, buf, &mreq);
                 mem_offset = std.mem.alignForward(usize, mem_offset, mreq.alignment);
-                try dev.bindBufferMemory(buf, host_visible_mem, mem_offset);
+
+                try check_vk(c.vk.BindBufferMemory(opt.dev, buf, host_visible_mem, mem_offset));
                 f.vtx_data = host_vis_data[mem_offset..][0..mreq.size];
                 f.vtx_buff = buf;
                 mem_offset += mreq.size;
             }
             { // index buf
-                const buf = try dev.createBuffer(&.{
+                const buffer_ci = std.mem.zeroInit(c.vk.BufferCreateInfo, .{
+                    .sType = c.vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
                     .size = @sizeOf(Indice) * opt.max_indices_per_frame,
-                    .usage = .{ .index_buffer_bit = true },
-                    .sharing_mode = .exclusive,
-                }, opt.vk_alloc);
-                errdefer dev.destroyBuffer(buf, opt.vk_alloc);
-                const mreq = dev.getBufferMemoryRequirements(buf);
+                    .usage = c.vk.BUFFER_USAGE_INDEX_BUFFER_BIT,
+                    .sharingMode = c.vk.SHARING_MODE_EXCLUSIVE,
+                });
+                var buf: c.vk.Buffer = undefined;
+                try check_vk(c.vk.CreateBuffer(opt.dev, &buffer_ci, opt.vk_alloc, &buf));
+                errdefer c.vk.DestroyBuffer(opt.dev, buf, opt.vk_alloc);
+
+                var mreq: c.vk.MemoryRequirements = undefined;
+                c.vk.GetBufferMemoryRequirements(opt.dev, buf, &mreq);
                 mem_offset = std.mem.alignForward(usize, mem_offset, mreq.alignment);
-                try dev.bindBufferMemory(buf, host_visible_mem, mem_offset);
+
+                try check_vk(c.vk.BindBufferMemory(opt.dev, buf, host_visible_mem, mem_offset));
                 f.idx_data = host_vis_data[mem_offset..][0..mreq.size];
                 f.idx_buff = buf;
                 mem_offset += mreq.size;
@@ -312,51 +328,64 @@ pub fn init(alloc: std.mem.Allocator, opt: InitOptions) !Self {
     // Descriptors
     const extra: u32 = 8; // idk, exact pool sizes returns OutOfPoolMemory slightly too soon, add extra margin
     const dpool_sizes = [_]c.vk.DescriptorPoolSize{
-        .{ .type = .combined_image_sampler, .descriptor_count = opt.max_textures + extra },
         //.{ .type = .uniform_buffer, .descriptor_count = opt.max_frames_in_flight },
-    };
-    const dpool = try dev.createDescriptorPool(&.{
-        .max_sets = opt.max_textures + extra,
-        .pool_size_count = dpool_sizes.len,
-        .p_pool_sizes = &dpool_sizes,
-        .flags = .{ .free_descriptor_set_bit = true },
-    }, opt.vk_alloc);
-    const dsl = try dev.createDescriptorSetLayout(
-        &c.vk.DescriptorSetLayoutCreateInfo{
-            .binding_count = 1,
-            .p_bindings = &.{
-                // c.vk.DescriptorSetLayoutBinding{
-                //     .binding = ubo_binding,
-                //     .descriptor_count = 1,
-                //     .descriptor_type = .uniform_buffer,
-                //     .stage_flags = .{ .vertex_bit = true },
-                // },
-                c.vk.DescriptorSetLayoutBinding{
-                    .binding = tex_binding,
-                    .descriptor_count = 1,
-                    .descriptor_type = .combined_image_sampler,
-                    .stage_flags = .{ .fragment_bit = true },
-                },
-            },
+        .{
+            .type = c.vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = opt.max_textures + extra,
         },
-        opt.vk_alloc,
-    );
+    };
+    const pool_ci = std.mem.zeroInit(c.vk.DescriptorPoolCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .maxSets = opt.max_textures + extra,
+        .poolSizeCount = dpool_sizes.len,
+        .pPoolSizes = &dpool_sizes,
+        .flags = c.vk.DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+    });
+    var dpool: c.vk.DescriptorPool = undefined;
+    try check_vk(c.vk.CreateDescriptorPool(opt.dev, &pool_ci, opt.vk_alloc, &dpool));
 
-    const render_pass_texture_target = try createRenderPass(dev, img_format);
-    const pipeline_layout = try dev.createPipelineLayout(&.{
-        .flags = .{},
-        .set_layout_count = 1,
-        .p_set_layouts = @ptrCast(&dsl),
-        .push_constant_range_count = 1,
-        .p_push_constant_ranges = &.{.{
-            .stage_flags = .{ .vertex_bit = true },
-            .offset = 0,
-            .size = @sizeOf(f32) * 4,
-        }},
-    }, opt.vk_alloc);
-    const pipeline = try createPipeline(&dev, pipeline_layout, opt.render_pass, opt.vk_alloc);
+    const set_ci = std.mem.zeroInit(c.vk.DescriptorSetLayoutCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 1,
+        .pBindings = &[_]c.vk.DescriptorSetLayoutBinding{
+            // c.vk.DescriptorSetLayoutBinding{
+            //     .binding = ubo_binding,
+            //     .descriptor_count = 1,
+            //     .descriptor_type = .uniform_buffer,
+            //     .stage_flags = .{ .vertex_bit = true },
+            // },
+            std.mem.zeroInit(c.vk.DescriptorSetLayoutBinding, .{
+                .binding = tex_binding,
+                .descriptorCount = 1,
+                .descriptorType = c.vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .stageFlags = c.vk.SHADER_STAGE_FRAGMENT_BIT,
+            }),
+        },
+    });
 
-    const samplers = [_]c.vk.SamplerCreateInfo{
+    var dsl: c.vk.DescriptorSetLayout = undefined;
+    try check_vk(c.vk.CreateDescriptorSetLayout(opt.dev, &set_ci, opt.vk_alloc, &dsl));
+
+    const render_pass_texture_target = try createRenderPass(opt.dev, img_format);
+
+    const pipeline_layout_ci = std.mem.zeroInit(c.vk.PipelineLayoutCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1,
+        .pSetLayouts = &dsl,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &[_]c.vk.PushConstantRange{
+            std.mem.zeroInit(c.vk.PushConstantRange, .{
+                .stageFlags = c.vk.SHADER_STAGE_VERTEX_BIT,
+                .offset = 0,
+                .size = @sizeOf(f32) * 4,
+            }),
+        },
+    });
+    var pipeline_layout: c.vk.PipelineLayout = undefined;
+    try check_vk(c.vk.CreatePipelineLayout(opt.dev, &pipeline_layout_ci, opt.vk_alloc, &pipeline_layout));
+    const pipeline = try createPipeline(opt.dev, pipeline_layout, opt.render_pass, opt.vk_alloc);
+
+    const samplers_ci = [_]c.vk.SamplerCreateInfo{
         .{ // dvui.TextureInterpolation.nearest
             .mag_filter = .nearest,
             .min_filter = .nearest,
@@ -392,18 +421,18 @@ pub fn init(alloc: std.mem.Allocator, opt: InitOptions) !Self {
             .unnormalized_coordinates = .false,
         },
     };
+    var samplers: [2]c.vk.Sampler = undefined;
+    try check_vk(c.vk.CreateSampler(opt.dev, &samplers_ci[0], opt.vk_alloc, &samplers[0]));
+    try check_vk(c.vk.CreateSampler(opt.dev, &samplers_ci[1], opt.vk_alloc, &samplers[1]));
 
     var res: Self = .{
-        .dev = dev,
+        .dev = opt.dev,
         .dpool = dpool,
         .pdev = opt.pdev,
         .vk_alloc = opt.vk_alloc,
 
         .dset_layout = dsl,
-        .samplers = .{
-            try dev.createSampler(&samplers[0], opt.vk_alloc),
-            try dev.createSampler(&samplers[1], opt.vk_alloc),
-        },
+        .samplers = samplers,
         .textures = try alloc.alloc(Texture, opt.max_textures),
         .texture_targets = try alloc.alloc(TextureTarget, opt.max_texture_targets),
         .destroy_textures = try alloc.alloc(u16, opt.max_textures),
@@ -544,13 +573,14 @@ pub fn beginFrame(self: *Self, cmdbuf: c.vk.CommandBuffer, framebuffer_size: c.v
 pub fn endFrame(self: *Self) c.vk.CommandBuffer {
     const cmdbuf = self.cmdbuf;
     self.dev.cmdEndRenderPass(cmdbuf);
-    self.cmdbuf = .null_handle;
+    self.cmdbuf = null;
     return cmdbuf;
 }
 
 // pub fn nanoTime(self: *Backend) i128 {
 //     return self.base_backend.nanoTime();
 // }
+
 // pub fn sleep(self: *Backend, ns: u64) void {
 //     return self.base_backend.sleep(ns);
 // }
@@ -558,7 +588,7 @@ pub fn endFrame(self: *Self) c.vk.CommandBuffer {
 //pub const begin = Override.begin;
 pub fn begin(self: *Self) void {
     self.render_target = null;
-    if (self.cmdbuf == .null_handle) @panic("dvui_vulkan_renderer: Command bufer not set before rendering started!");
+    if (self.cmdbuf == null) @panic("dvui_vulkan_renderer: Command bufer not set before rendering started!");
     // TODO: FIXME: get rid of this or do it more cleanly
     //  WARNING: very risky as sdl_backend calls renderer, but have no other way to pass through arena
     // self.base_backend.begin(arena); // call base
@@ -592,13 +622,16 @@ pub fn begin(self: *Self) void {
 }
 
 pub fn end(_: *Backend) void {}
+
 pub fn pixelSize(self: *Backend) Size {
     // return self.base_backend.pixelSize();
     return .{ .w = @floatFromInt(self.framebuffer_size.width), .h = @floatFromInt(self.framebuffer_size.height) };
 }
+
 // pub fn windowSize(self: *Backend) dvui.Size.Natural {
 //     return self.base_backend.windowSize();
 // }
+
 // pub fn contentScale(self: *Backend) f32 {
 //     return self.base_backend.contentScale();
 // }
@@ -862,24 +895,24 @@ pub fn renderTarget(self: *Backend, texture: dvui.Texture) void {
 const TextureTarget = struct {
     tex_idx: TextureIdx = 0,
     fb_size: c.vk.Extent2D = .{ .width = 0, .height = 0 },
-    framebuffer: c.vk.Framebuffer = .null_handle,
+    framebuffer: c.vk.Framebuffer = null,
 
     fn isNull(self: @This()) bool {
-        return self.framebuffer == .null_handle;
+        return self.framebuffer == null;
     }
 };
 
 const Texture = struct {
-    img: c.vk.Image = .null_handle,
-    img_view: c.vk.ImageView = .null_handle,
-    mem: c.vk.DeviceMemory = .null_handle,
-    dset: c.vk.DescriptorSet = .null_handle,
+    img: c.vk.Image = null,
+    img_view: c.vk.ImageView = null,
+    mem: c.vk.DeviceMemory = null,
+    dset: c.vk.DescriptorSet = null,
 
     trace: Trace = Trace.init,
     const Trace = std.debug.ConfigurableTrace(6, 5, texture_tracing);
 
     pub fn isNull(self: @This()) bool {
-        return self.dset == .null_handle;
+        return self.dset == null;
     }
 
     pub fn deinit(tex: Texture, b: *Backend) void {
@@ -893,38 +926,51 @@ const Texture = struct {
 };
 
 fn createPipeline(
-    dev: *DeviceProxy,
+    dev: c.vk.Device,
     layout: c.vk.PipelineLayout,
     render_pass: c.vk.RenderPass,
     vk_alloc: ?*c.vk.AllocationCallbacks,
-) DeviceProxy.CreateGraphicsPipelinesError!c.vk.Pipeline {
+) !c.vk.Pipeline {
     //  NOTE: VK_KHR_maintenance5 (which was promoted to vulkan 1.4) deprecates ShaderModules.
     // todo: check for extension and then enable
     const ext_m5 = false; // VK_KHR_maintenance5
-    const vert_shdd = c.vk.ShaderModuleCreateInfo{
-        .code_size = vs_spv.len,
-        .p_code = @ptrCast(&vs_spv),
-    };
-    const frag_shdd = c.vk.ShaderModuleCreateInfo{
-        .code_size = fs_spv.len,
-        .p_code = @ptrCast(&fs_spv),
-    };
+
+    const vert_shdd = std.mem.zeroInit(c.vk.ShaderModuleCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = vs_spv.len,
+        .pCode = @ptrCast(&vs_spv),
+    });
+    const shader_module: c.vk.ShaderModule = if (ext_m5) {
+        var module: c.vk.ShaderModule = undefined;
+        try check_vk(c.vk.CreateShaderModule(dev, &vert_shdd, vk_alloc, &module));
+        module;
+    } else null;
+
+    const frag_shdd = std.mem.zeroInit(c.vk.ShaderModuleCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = fs_spv.len,
+        .pCode = @ptrCast(&fs_spv),
+    });
+
     var pssci = [_]c.vk.PipelineShaderStageCreateInfo{
-        .{
-            .stage = .{ .vertex_bit = true },
-            .p_name = "main",
-            .module = if (ext_m5) null else try dev.createShaderModule(&vert_shdd, vk_alloc),
-            .p_next = if (ext_m5) &vert_shdd else null,
-        },
-        .{
-            .stage = .{ .fragment_bit = true },
+        .{std.mem.zeroInit(c.vk.PipelineShaderStageCreateInfo, .{
+            .sType = c.vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = c.vk.SHADER_STAGE_VERTEX_BIT,
+            .module = shader_module,
+            .pNext = if (ext_m5) &vert_shdd else null,
+            .pName = "main",
+        })},
+        .{std.mem.zeroInit(c.vk.PipelineShaderStageCreateInfo, .{
+            .sType = c.vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = c.vk.SHADER_STAGE_FRAGMENT_BIT,
             //.module = frag,
-            .p_name = "main",
-            .module = if (ext_m5) null else try dev.createShaderModule(&frag_shdd, vk_alloc),
-            .p_next = if (ext_m5) &frag_shdd else null,
-        },
+            .pNext = if (ext_m5) &frag_shdd else null,
+            .pName = "main",
+        })},
     };
-    defer if (!ext_m5) for (pssci) |p| if (p.module != .null_handle) dev.destroyShaderModule(p.module, vk_alloc);
+    defer if (!ext_m5) for (pssci) |p| if (p.module != null) {
+        c.vk.DestroyShaderModule(dev, p.module, vk_alloc);
+    };
 
     const pvisci = c.vk.PipelineVertexInputStateCreateInfo{
         .vertex_binding_description_count = VertexBindings.binding_description.len,
@@ -933,63 +979,80 @@ fn createPipeline(
         .p_vertex_attribute_descriptions = &VertexBindings.attribute_description,
     };
 
-    const piasci = c.vk.PipelineInputAssemblyStateCreateInfo{
-        .topology = .triangle_list,
-        .primitive_restart_enable = .false,
-    };
+    const piasci = std.mem.zeroInit(c.vk.PipelineInputAssemblyStateCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .topology = c.vk.PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+        .primitiveRestartEnable = c.vk.FALSE,
+    });
 
     var viewport: c.vk.Viewport = undefined;
     var scissor: c.vk.Rect2D = undefined;
-    const pvsci = c.vk.PipelineViewportStateCreateInfo{
-        .viewport_count = 1,
-        .p_viewports = @ptrCast(&viewport), // set in createCommandBuffers with cmdSetViewport
-        .scissor_count = 1,
-        .p_scissors = @ptrCast(&scissor), // set in createCommandBuffers with cmdSetScissor
-    };
+    const pvsci = std.mem.zeroInit(c.vk.PipelineViewportStateCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .viewportCount = 1,
+        .pViewports = @ptrCast(&viewport), // set in createCommandBuffers with cmdSetViewport
+        .scissorCount = 1,
+        .pScissors = @ptrCast(&scissor), // set in createCommandBuffers with cmdSetScissor
+    });
 
-    const prsci = c.vk.PipelineRasterizationStateCreateInfo{
-        .depth_clamp_enable = .false,
-        .rasterizer_discard_enable = .false,
-        .polygon_mode = .fill,
-        .cull_mode = .{ .back_bit = false },
-        .front_face = .clockwise,
-        .depth_bias_enable = .false,
-        .depth_bias_constant_factor = 0,
-        .depth_bias_clamp = 0,
-        .depth_bias_slope_factor = 0,
-        .line_width = 1,
-    };
+    const prsci = std.mem.zeroInit(c.vk.PipelineRasterizationStateCreateInfo, .{
+        .depthClampEnable = c.vk.FALSE,
+        .rasterizerDiscardEnable = c.vk.FALSE,
+        .polygonMode = c.vk.POLYGON_MODE_FILL,
+        .cullMode = c.vk.CULL_MODE_NONE,
+        .frontFace = c.vk.FRONT_FACE_CLOCKWISE,
+        .depthBiasEnable = c.vk.FALSE,
+        .depthBiasConstant_factor = 0,
+        .depthBiasClamp = 0,
+        .depthBiasSlope_factor = 0,
+        .lineWidth = 1,
+    });
 
-    const pmsci = c.vk.PipelineMultisampleStateCreateInfo{
-        .rasterization_samples = .{ .@"1_bit" = true },
-        .sample_shading_enable = .false,
-        .min_sample_shading = 1,
-        .alpha_to_coverage_enable = .false,
-        .alpha_to_one_enable = .false,
-    };
+    const pmsci = std.mem.zeroInit(c.vk.PipelineMultisampleStateCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        .rasterizationSamples = c.vk.SAMPLE_COUNT_1_BIT,
+        .sampleShadingEnable = c.vk.FALSE,
+        .minSampleShading = 1.0,
+        .alphaToCoverageEnable = c.vk.FALSE,
+        .alphaToOneEnable = c.vk.FALSE,
+    });
 
     // do premultiplied alpha blending:
-    // const pma_blend = c.SDL_ComposeCustomBlendMode(c.SDL_BLENDFACTOR_ONE, c.SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, c.SDL_BLENDOPERATION_ADD, c.SDL_BLENDFACTOR_ONE, c.SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, c.SDL_BLENDOPERATION_ADD);
-    const pcbas = c.vk.PipelineColorBlendAttachmentState{
-        .blend_enable = .true,
-        .src_color_blend_factor = .one,
-        .dst_color_blend_factor = .one_minus_src_alpha,
-        .color_blend_op = .add,
-        .src_alpha_blend_factor = .one,
-        .dst_alpha_blend_factor = .one_minus_src_alpha,
-        .alpha_blend_op = .add,
-        .color_write_mask = .{ .r_bit = true, .g_bit = true, .b_bit = true, .a_bit = true },
-    };
+    // const pma_blend = c.SDL_ComposeCustomBlendMode(
+    //     c.SDL_BLENDFACTOR_ONE,
+    //     c.SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+    //     c.SDL_BLENDOPERATION_ADD,
+    //     c.SDL_BLENDFACTOR_ONE,
+    //     c.SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+    //     c.SDL_BLENDOPERATION_ADD,
+    // );
+    const pcbas = std.mem.zeroInit(c.vk.PipelineColorBlendAttachmentState, .{
+        .blendEnable = c.vk.TRUE,
+        .srcColorBlendFactor = c.vk.BLEND_FACTOR_ONE,
+        .dstColorBlendFactor = c.vk.BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .colorBlendOp = c.vk.BLEND_OP_ADD,
+        .srcAlphaBlendFactor = c.vk.BLEND_FACTOR_ONE,
+        .dstAlphaBlendFactor = c.vk.BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .alphaBlendOp = c.vk.BLEND_OP_ADD,
+        .colorWriteMask = c.vk.COLOR_COMPONENT_R_BIT |
+            c.vk.COLOR_COMPONENT_G_BIT |
+            c.vk.COLOR_COMPONENT_B_BIT |
+            c.vk.COLOR_COMPONENT_A_BIT,
+    });
 
-    const pcbsci = c.vk.PipelineColorBlendStateCreateInfo{
-        .logic_op_enable = .false,
-        .logic_op = .copy,
-        .attachment_count = 1,
-        .p_attachments = @ptrCast(&pcbas),
-        .blend_constants = [_]f32{ 0, 0, 0, 0 },
-    };
+    const pcbsci = std.mem.zeroInit(c.vk.PipelineColorBlendStateCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .logicOpEnable = c.vk.FALSE,
+        .logicOp = c.vk.LOGIC_OP_COPY,
+        .attachmentCount = 1,
+        .pAttachments = @ptrCast(&pcbas),
+        .blendConstants = &[_]f32{ 0, 0, 0, 0 },
+    });
 
-    const dynstate = [_]c.vk.DynamicState{ .viewport, .scissor };
+    const dynstate = [_]c.vk.DynamicState{
+        c.vk.DYNAMIC_STATE_VIEWPORT,
+        c.vk.DYNAMIC_STATE_SCISSOR,
+    };
     const pdsci = c.vk.PipelineDynamicStateCreateInfo{
         .flags = .{},
         .dynamic_state_count = dynstate.len,
@@ -998,32 +1061,33 @@ fn createPipeline(
 
     const gpci = c.vk.GraphicsPipelineCreateInfo{
         .flags = .{},
-        .stage_count = pssci.len,
-        .p_stages = &pssci,
-        .p_vertex_input_state = &pvisci,
-        .p_input_assembly_state = &piasci,
-        .p_tessellation_state = null,
-        .p_viewport_state = &pvsci,
-        .p_rasterization_state = &prsci,
-        .p_multisample_state = &pmsci,
-        .p_depth_stencil_state = null,
-        .p_color_blend_state = &pcbsci,
-        .p_dynamic_state = &pdsci,
+        .stageCount = pssci.len,
+        .pStages = &pssci,
+        .pVertexInputState = &pvisci,
+        .pInputAssemblyState = &piasci,
+        .pTessellationState = null,
+        .pViewportState = &pvsci,
+        .pRasterizationState = &prsci,
+        .pMultisampleState = &pmsci,
+        .pDepthStencilState = null,
+        .pColorBlendState = &pcbsci,
+        .pDynamicState = &pdsci,
         .layout = layout,
-        .render_pass = render_pass,
+        .renderPass = render_pass,
         .subpass = 0,
-        .base_pipeline_handle = .null_handle,
-        .base_pipeline_index = -1,
+        .basePipelineHandle = null,
+        .basePipelineIndex = -1,
     };
 
     var pipeline: c.vk.Pipeline = undefined;
-    _ = try dev.createGraphicsPipelines(
-        .null_handle,
+    try check_vk(c.vk.CreateGraphicsPipelines(
+        null,
         1,
         @ptrCast(&gpci),
         vk_alloc,
         @ptrCast(&pipeline),
-    );
+    ));
+
     return pipeline;
 }
 
@@ -1089,7 +1153,7 @@ pub fn endSingleTimeCommands(self: *Self, cmdbuf: c.vk.CommandBuffer) !void {
         .signal_semaphore_count = 0,
         .p_signal_semaphores = null,
     }};
-    try self.dev.queueSubmit(self.queue, 1, &qs, .null_handle);
+    try self.dev.queueSubmit(self.queue, 1, &qs, null);
     // TODO: is there better way to sync this than stalling the queue? barriers or something
     self.dev.queueWaitIdle(self.queue) catch |err| {
         slog.warn("queueWaitIdle failed: {}", .{err});
@@ -1261,30 +1325,30 @@ pub fn createAndUplaodTexture(self: *Backend, pixels: [*]const u8, width: u32, h
     return tex;
 }
 
-pub fn createRenderPass(dev: DeviceProxy, format: c.vk.Format) !c.vk.RenderPass {
-    var subpasses: [1]c.vk.SubpassDescription = undefined;
+pub fn createRenderPass(dev: c.vk.Device, format: c.vk.Format) !c.vk.RenderPass {
     var color_attachments: [1]c.vk.AttachmentDescription = undefined;
+    var subpasses: [1]c.vk.SubpassDescription = undefined;
 
     { // Render to framebuffer
-        color_attachments[0] = c.vk.AttachmentDescription{
+        color_attachments[0] = std.mem.zeroInit(c.vk.AttachmentDescription, .{
             .format = format, // swapchain / framebuffer image format
-            .samples = .{ .@"1_bit" = true },
-            .load_op = .clear,
-            .store_op = .store,
-            .stencil_load_op = .dont_care,
-            .stencil_store_op = .dont_care,
-            .initial_layout = .undefined,
-            .final_layout = .present_src_khr,
-        };
-        const color_attachment_ref = c.vk.AttachmentReference{
+            .samples = c.vk.SAMPLE_COUNT_1_BIT,
+            .loadOp = c.vk.ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = c.vk.ATTACHMENT_STORE_OP_STORE,
+            .stencilLoadOp = c.vk.ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = c.vk.ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout = c.vk.IMAGE_LAYOUT_UNDEFINED,
+            .finalLayout = c.vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        });
+        const color_attachment_ref = std.mem.zeroInit(c.vk.AttachmentReference, .{
             .attachment = 0,
-            .layout = .color_attachment_optimal,
-        };
-        subpasses[0] = c.vk.SubpassDescription{
-            .pipeline_bind_point = .graphics,
-            .color_attachment_count = 1,
-            .p_color_attachments = @ptrCast(&color_attachment_ref),
-        };
+            .layout = c.vk.IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        });
+        subpasses[0] = std.mem.zeroInit(c.vk.SubpassDescription, .{
+            .pipelineBindPoint = c.vk.PIPELINE_BIND_POINT_GRAPHICS,
+            .colorAttachmentCount = 1,
+            .pColorAttachments = &color_attachment_ref,
+        });
     }
 
     // { // texture render targets
@@ -1311,14 +1375,19 @@ pub fn createRenderPass(dev: DeviceProxy, format: c.vk.Format) !c.vk.RenderPass 
     //     }
     // }
 
-    return try dev.createRenderPass(&.{
-        .attachment_count = @intCast(color_attachments.len),
-        .p_attachments = &color_attachments,
-        .subpass_count = @intCast(subpasses.len),
-        .p_subpasses = &subpasses,
-        .dependency_count = 0,
-        .p_dependencies = null, //@ptrCast(&dep),
-    }, null);
+    const render_pass_ci = std.mem.zeroInit(c.vk.RenderPassCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+        .attachmentCount = color_attachments.len,
+        .pAttachments = &color_attachments,
+        .subpassCount = subpasses.len,
+        .pSubpasses = &subpasses,
+        .dependencyCount = 0,
+        .pDependencies = null, // @ptrCast(&dep)
+    });
+    var render_pass: c.vk.RenderPass = undefined;
+    try check_vk(c.vk.CreateRenderPass(dev, &render_pass_ci, null, &render_pass));
+
+    return render_pass;
 }
 
 const VertexBindings = struct {
