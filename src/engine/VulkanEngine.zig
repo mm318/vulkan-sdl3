@@ -94,8 +94,7 @@ frame_number: i32 = 0,
 selected_shader: i32 = 0,
 selected_mesh: i32 = 0,
 
-window: *c.SDL.Window = undefined,
-renderer: *c.SDL.Renderer = undefined,
+sdl_window: *c.SDL.Window = undefined,
 
 // Keep this around for long standing allocations
 allocator: std.mem.Allocator = undefined,
@@ -221,16 +220,10 @@ pub fn init(a: std.mem.Allocator) Self {
         c.SDL.WINDOW_VULKAN | c.SDL.WINDOW_HIGH_PIXEL_DENSITY | c.SDL.WINDOW_RESIZABLE,
     ) orelse @panic("Failed to create SDL window");
 
-    // const renderer = c.SDL.CreateRenderer(window, null) orelse {
-    //     std.debug.print("Failed to create renderer: {s}\n", .{c.SDL.GetError()});
-    //     @panic("Failed to create SDL window");
-    // };
-
     _ = c.SDL.ShowWindow(window);
 
     var engine = Self{
-        .window = window,
-        // .renderer = renderer,
+        .sdl_window = window,
         .allocator = a,
         .deletion_queue = std.ArrayList(VulkanDeleter){},
         .buffer_deletion_queue = std.ArrayList(VmaBufferDeleter){},
@@ -338,7 +331,7 @@ fn init_device(self: *Self) void {
 fn init_swapchain(self: *Self) void {
     var win_width: c_int = undefined;
     var win_height: c_int = undefined;
-    check_sdl(c.SDL.GetWindowSize(self.window, &win_width, &win_height));
+    check_sdl(c.SDL.GetWindowSize(self.sdl_window, &win_width, &win_height));
 
     // Create a swapchain
     const swapchain = vki.create_swapchain(self.allocator, .{
@@ -1358,11 +1351,33 @@ fn init_scene(self: *Self) void {
 }
 
 pub fn init_gui(self: *Self) void {
+    // how many frames in flight we want
+    // NOTE: swapchain image count = prefered_frames_in_flight + 1 (because 1 is being presented and not worked on)
+    // const prefered_frames_in_flight = 2;
+    // just in case we don't get `prefered_frames_in_flight` as fallback
+    // max frames in flight app can support (in case device requires more than preferred)
+    const max_frames_in_flight = 3;
+
     // create SDL backend using existing window and renderer, app still owns the window/renderer
-    self.dvui_backend = DvuiBackend.init(@ptrCast(self.window), @ptrCast(self.renderer));
+    self.dvui_backend = DvuiBackend.init(self.allocator, @ptrCast(self.sdl_window), .{
+        .max_frames_in_flight = max_frames_in_flight,
+        // .vkGetDeviceProcAddr = ctx.instance.wrapper.dispatch.vkGetDeviceProcAddr.?,
+        .dev = self.device,
+        .pdev = self.physical_device,
+        .render_pass = self.render_pass,
+        .queue = self.graphics_queue,   // or should it be self.present_queue
+        .command_pool = self.upload_context.command_pool,
+        // tight limits
+        .max_indices_per_frame = 1024 * 96,
+        .max_vertices_per_frame = 1024 * 32,
+        // test overflow
+        // .max_indices_per_frame = 1024 * 32,
+        // .max_vertices_per_frame = 1024 * 16,
+    },);
 
     // init dvui Window (maps onto a single OS window)
     self.dvui_window = dvui.Window.init(@src(), self.allocator, self.dvui_backend.?.backend(), .{}) catch @panic("Failed to create DVUI window");
+    self.dvui_window.theme = dvui.Theme.builtin.adwaita_dark;
 }
 
 pub fn cleanup(self: *Self) void {
@@ -1415,7 +1430,7 @@ pub fn cleanup(self: *Self) void {
 
     c.vk.DestroyInstance(self.instance, vk_alloc_cbs);
     c.SDL.DestroyRenderer(self.renderer);
-    c.SDL.DestroyWindow(self.window);
+    c.SDL.DestroyWindow(self.sdl_window);
     c.SDL.Quit();
 
     if (self.dvui_window) |*dvui_window| {
@@ -1694,7 +1709,7 @@ pub fn run(self: *Self) void {
                 0,
             ) catch @panic("Out of memory");
             defer self.allocator.free(new_title);
-            _ = c.SDL.SetWindowTitle(self.window, new_title.ptr);
+            _ = c.SDL.SetWindowTitle(self.sdl_window, new_title.ptr);
         }
     }
 }

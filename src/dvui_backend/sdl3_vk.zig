@@ -2,27 +2,28 @@ const std = @import("std");
 const builtin = @import("builtin");
 const dvui = @import("dvui");
 
-const sdl_options = @import("sdl_options");
 pub const c = @import("vulkan").c;
 
 pub const kind: dvui.enums.Backend = .sdl3_vk;
 
 pub const SDLBackend = @This();
 pub const Context = *SDLBackend;
-// const DvuiVkRenderer = @import("dvui_vulkan_renderer.zig");
+
+const DvuiVkRenderer = @import("dvui_vulkan_renderer.zig");
 
 const log = std.log.scoped(.SDLBackend);
 
 window: *c.SDL.Window,
-renderer: *c.SDL.Renderer,
-// renderer: DvuiVkRenderer,
+renderer: DvuiVkRenderer,
 initial_scale: f32 = 1.0,
 last_pixel_size: dvui.Size.Physical = .{ .w = 800, .h = 600 },
 last_window_size: dvui.Size.Natural = .{ .w = 800, .h = 600 },
 arena: std.mem.Allocator = undefined,
 
-pub fn init(window: *c.SDL.Window, renderer: *c.SDL.Renderer) SDLBackend {
-    return SDLBackend{ .window = window, .renderer = renderer };
+pub fn init(alloc: std.mem.Allocator, window: *c.SDL_Window, options: DvuiVkRenderer) SDLBackend {
+    // init on top of already initialized backend, overrides rendering
+    const dvui_vk_backend = DvuiVkRenderer.init(alloc, options) catch @panic("unable to initialize DvuiVkRenderer");
+    return SDLBackend{ .window = window, .renderer = dvui_vk_backend };
 }
 
 const SDL_ERROR = bool;
