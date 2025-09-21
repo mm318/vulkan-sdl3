@@ -938,7 +938,7 @@ fn createPipeline(
     const vert_shdd = std.mem.zeroInit(c.vk.ShaderModuleCreateInfo, .{
         .sType = c.vk.STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
         .codeSize = vs_spv.len,
-        .pCode = @ptrCast(&vs_spv),
+        .pCode = @as([*]const u32, @ptrCast(&vs_spv)),
     });
     const shader_module: c.vk.ShaderModule = if (ext_m5) {
         var module: c.vk.ShaderModule = undefined;
@@ -949,34 +949,34 @@ fn createPipeline(
     const frag_shdd = std.mem.zeroInit(c.vk.ShaderModuleCreateInfo, .{
         .sType = c.vk.STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
         .codeSize = fs_spv.len,
-        .pCode = @ptrCast(&fs_spv),
+        .pCode = @as([*]const u32, @ptrCast(&fs_spv)),
     });
 
     var pssci = [_]c.vk.PipelineShaderStageCreateInfo{
-        .{std.mem.zeroInit(c.vk.PipelineShaderStageCreateInfo, .{
+        std.mem.zeroInit(c.vk.PipelineShaderStageCreateInfo, .{
             .sType = c.vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = c.vk.SHADER_STAGE_VERTEX_BIT,
             .module = shader_module,
             .pNext = if (ext_m5) &vert_shdd else null,
             .pName = "main",
-        })},
-        .{std.mem.zeroInit(c.vk.PipelineShaderStageCreateInfo, .{
+        }),
+        std.mem.zeroInit(c.vk.PipelineShaderStageCreateInfo, .{
             .sType = c.vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = c.vk.SHADER_STAGE_FRAGMENT_BIT,
             //.module = frag,
             .pNext = if (ext_m5) &frag_shdd else null,
             .pName = "main",
-        })},
+        }),
     };
     defer if (!ext_m5) for (pssci) |p| if (p.module != null) {
         c.vk.DestroyShaderModule(dev, p.module, vk_alloc);
     };
 
     const pvisci = c.vk.PipelineVertexInputStateCreateInfo{
-        .vertex_binding_description_count = VertexBindings.binding_description.len,
-        .p_vertex_binding_descriptions = &VertexBindings.binding_description,
-        .vertex_attribute_description_count = VertexBindings.attribute_description.len,
-        .p_vertex_attribute_descriptions = &VertexBindings.attribute_description,
+        .vertexBindingDescriptionCount = VertexBindings.binding_description.len,
+        .pVertexBindingDescriptions = &VertexBindings.binding_description,
+        .vertexAttributeDescriptionCount = VertexBindings.attribute_description.len,
+        .pVertexAttributeDescriptions = &VertexBindings.attribute_description,
     };
 
     const piasci = std.mem.zeroInit(c.vk.PipelineInputAssemblyStateCreateInfo, .{
@@ -990,9 +990,9 @@ fn createPipeline(
     const pvsci = std.mem.zeroInit(c.vk.PipelineViewportStateCreateInfo, .{
         .sType = c.vk.STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
         .viewportCount = 1,
-        .pViewports = @ptrCast(&viewport), // set in createCommandBuffers with cmdSetViewport
+        .pViewports = &viewport, // set in createCommandBuffers with cmdSetViewport
         .scissorCount = 1,
-        .pScissors = @ptrCast(&scissor), // set in createCommandBuffers with cmdSetScissor
+        .pScissors = &scissor, // set in createCommandBuffers with cmdSetScissor
     });
 
     const prsci = std.mem.zeroInit(c.vk.PipelineRasterizationStateCreateInfo, .{
@@ -1002,9 +1002,9 @@ fn createPipeline(
         .cullMode = c.vk.CULL_MODE_NONE,
         .frontFace = c.vk.FRONT_FACE_CLOCKWISE,
         .depthBiasEnable = c.vk.FALSE,
-        .depthBiasConstant_factor = 0,
+        .depthBiasConstantFactor = 0,
         .depthBiasClamp = 0,
-        .depthBiasSlope_factor = 0,
+        .depthBiasSlopeFactor = 0,
         .lineWidth = 1,
     });
 
@@ -1045,8 +1045,8 @@ fn createPipeline(
         .logicOpEnable = c.vk.FALSE,
         .logicOp = c.vk.LOGIC_OP_COPY,
         .attachmentCount = 1,
-        .pAttachments = @ptrCast(&pcbas),
-        .blendConstants = &[_]f32{ 0, 0, 0, 0 },
+        .pAttachments = &pcbas,
+        .blendConstants = [_]f32{ 0, 0, 0, 0 },
     });
 
     const dynstate = [_]c.vk.DynamicState{
@@ -1054,13 +1054,13 @@ fn createPipeline(
         c.vk.DYNAMIC_STATE_SCISSOR,
     };
     const pdsci = c.vk.PipelineDynamicStateCreateInfo{
-        .flags = .{},
-        .dynamic_state_count = dynstate.len,
-        .p_dynamic_states = &dynstate,
+        .flags = 0,
+        .dynamicStateCount = dynstate.len,
+        .pDynamicStates = &dynstate,
     };
 
     const gpci = c.vk.GraphicsPipelineCreateInfo{
-        .flags = .{},
+        .flags = 0,
         .stageCount = pssci.len,
         .pStages = &pssci,
         .pVertexInputState = &pvisci,
@@ -1081,6 +1081,7 @@ fn createPipeline(
 
     var pipeline: c.vk.Pipeline = undefined;
     try check_vk(c.vk.CreateGraphicsPipelines(
+        dev,
         null,
         1,
         @ptrCast(&gpci),
@@ -1394,26 +1395,26 @@ const VertexBindings = struct {
     const binding_description = [_]c.vk.VertexInputBindingDescription{.{
         .binding = 0,
         .stride = @sizeOf(Vertex),
-        .input_rate = .vertex,
+        .inputRate = c.vk.VERTEX_INPUT_RATE_VERTEX,
     }};
 
     const attribute_description = [_]c.vk.VertexInputAttributeDescription{
         .{
             .binding = 0,
             .location = 0,
-            .format = .r32g32_sfloat,
+            .format = c.vk.FORMAT_R32G32_SFLOAT,
             .offset = @offsetOf(Vertex, "pos"),
         },
         .{
             .binding = 0,
             .location = 1,
-            .format = .r8g8b8a8_unorm,
+            .format = c.vk.FORMAT_R8G8B8A8_UNORM,
             .offset = @offsetOf(Vertex, "col"),
         },
         .{
             .binding = 0,
             .location = 2,
-            .format = .r32g32_sfloat,
+            .format = c.vk.FORMAT_R32G32_SFLOAT,
             .offset = @offsetOf(Vertex, "uv"),
         },
     };
