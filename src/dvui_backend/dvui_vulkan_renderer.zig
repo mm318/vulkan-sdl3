@@ -453,8 +453,8 @@ pub fn init(alloc: std.mem.Allocator, opt: InitOptions) !Self {
     };
     @memset(res.textures, Texture{});
     @memset(res.texture_targets, TextureTarget{});
-    res.dummy_texture = try res.createAndUplaodTexture(&[4]u8{ 255, 255, 255, 255 }, 1, 1, .nearest);
-    res.error_texture = try res.createAndUplaodTexture(&opt.error_texture_color, 1, 1, .nearest);
+    res.dummy_texture = try res.createAndUploadTexture(&[4]u8{ 255, 255, 255, 255 }, 1, 1, .nearest);
+    res.error_texture = try res.createAndUploadTexture(&opt.error_texture_color, 1, 1, .nearest);
     return res;
 }
 
@@ -732,7 +732,7 @@ fn findEmptyTextureSlot(self: *Backend) ?TextureIdx {
 pub fn textureCreate(self: *Backend, pixels: [*]u8, width: u32, height: u32, interpolation: dvui.enums.TextureInterpolation) dvui.Texture {
     const slot = self.findEmptyTextureSlot() orelse return .{ .ptr = invalid_texture, .width = 1, .height = 1 };
     const out_tex: *Texture = &self.textures[slot];
-    const tex = self.createAndUplaodTexture(pixels, width, height, interpolation) catch |err| {
+    const tex = self.createAndUploadTexture(pixels, width, height, interpolation) catch |err| {
         if (enable_breakpoints) @breakpoint();
         slog.err("Can't create texture: {}", .{err});
         return .{ .ptr = invalid_texture, .width = 1, .height = 1 };
@@ -1167,163 +1167,210 @@ pub fn endSingleTimeCommands(self: *Self, cmdbuf: c.vk.CommandBuffer) !void {
     };
 }
 
-pub fn createTextureWithMem(self: Backend, img_info: c.vk.ImageCreateInfo, interpolation: dvui.enums.TextureInterpolation) !Texture {
+pub fn createTextureWithMem(
+    self: Backend,
+    img_info: c.vk.ImageCreateInfo,
+    interpolation: dvui.enums.TextureInterpolation,
+) !Texture {
     const dev = self.dev;
 
-    const img: c.vk.Image = try dev.createImage(&img_info, self.vk_alloc);
-    errdefer dev.destroyImage(img, self.vk_alloc);
-    const mreq = dev.getImageMemoryRequirements(img);
+    var img: c.vk.Image = undefined;
+    try check_vk(c.vk.CreateImage(dev, &img_info, self.vk_alloc, &img));
+    errdefer c.vk.DestroyImage(dev, img, self.vk_alloc);
 
-    const mem = dev.allocateMemory(&.{
-        .allocation_size = mreq.size,
-        .memory_type_index = self.device_local_mem_idx,
-    }, self.vk_alloc) catch |err| {
+    var mreq: c.vk.MemoryRequirements = undefined;
+    c.vk.GetImageMemoryRequirements(dev, img, &mreq);
+
+    const memory_ai = std.mem.zeroInit(c.vk.MemoryAllocateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = mreq.size,
+        .memoryTypeIndex = self.device_local_mem_idx,
+    });
+    var mem: c.vk.DeviceMemory = undefined;
+    check_vk(c.vk.AllocateMemory(dev, &memory_ai, self.vk_alloc, &mem)) catch |err| {
         slog.err("Failed to alloc texture mem: {}", .{err});
         return err;
     };
-    errdefer dev.freeMemory(mem, self.vk_alloc);
-    try dev.bindImageMemory(img, mem, 0);
+    errdefer c.vk.FreeMemory(dev, mem, self.vk_alloc);
+    try check_vk(c.vk.BindImageMemory(dev, img, mem, 0));
 
     const srr = c.vk.ImageSubresourceRange{
-        .aspect_mask = .{ .color_bit = true },
-        .base_mip_level = 0,
-        .level_count = 1,
-        .base_array_layer = 0,
-        .layer_count = 1,
+        .aspectMask = c.vk.IMAGE_ASPECT_COLOR_BIT,
+        .baseMipLevel = 0,
+        .levelCount = 1,
+        .baseArrayLayer = 0,
+        .layerCount = 1,
     };
-    const img_view = try dev.createImageView(&.{
-        .flags = .{},
+    const image_view_ci = std.mem.zeroInit(c.vk.ImageViewCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .flags = 0,
         .image = img,
-        .view_type = .@"2d",
+        .viewType = c.vk.IMAGE_VIEW_TYPE_2D,
         .format = img_format,
         .components = .{
-            .r = .identity,
-            .g = .identity,
-            .b = .identity,
-            .a = .identity,
+            .r = c.vk.COMPONENT_SWIZZLE_IDENTITY,
+            .g = c.vk.COMPONENT_SWIZZLE_IDENTITY,
+            .b = c.vk.COMPONENT_SWIZZLE_IDENTITY,
+            .a = c.vk.COMPONENT_SWIZZLE_IDENTITY,
         },
-        .subresource_range = srr,
-    }, self.vk_alloc);
-    errdefer dev.destroyImageView(img_view, self.vk_alloc);
+        .subresourceRange = srr,
+    });
+    var img_view: c.vk.ImageView = undefined;
+    try check_vk(c.vk.CreateImageView(dev, &image_view_ci, self.vk_alloc, &img_view));
+    errdefer c.vk.DestroyImageView(dev, img_view, self.vk_alloc);
 
+    const dset_ai = std.mem.zeroInit(c.vk.DescriptorSetAllocateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = self.dpool,
+        .descriptorSetCount = 1,
+        .pSetLayouts = &self.dset_layout,
+    });
     var dset: [1]c.vk.DescriptorSet = undefined;
-    dev.allocateDescriptorSets(&.{
-        .descriptor_pool = self.dpool,
-        .descriptor_set_count = 1,
-        .p_set_layouts = @ptrCast(&self.dset_layout),
-    }, &dset) catch |err| {
+    check_vk(c.vk.AllocateDescriptorSets(dev, &dset_ai, &dset)) catch |err| {
         if (enable_breakpoints) @breakpoint();
         slog.err("Failed to allocate descriptor set: {}", .{err});
         return err;
     };
-    const dii = [1]c.vk.DescriptorImageInfo{.{
+
+    const dii: [1]c.vk.DescriptorImageInfo = .{std.mem.zeroInit(c.vk.DescriptorImageInfo, .{
         .sampler = self.samplers[@intFromEnum(interpolation)],
-        .image_view = img_view,
-        .image_layout = .shader_read_only_optimal,
-    }};
-    const write_dss = [_]c.vk.WriteDescriptorSet{.{
-        .dst_set = dset[0],
-        .dst_binding = tex_binding,
-        .dst_array_element = 0,
-        .descriptor_count = 1,
-        .descriptor_type = .combined_image_sampler,
-        .p_image_info = &dii,
-        .p_buffer_info = undefined,
-        .p_texel_buffer_view = undefined,
-    }};
-    dev.updateDescriptorSets(write_dss.len, &write_dss, 0, null);
+        .imageView = img_view,
+        .imageLayout = c.vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+    })};
+    const write_dss: [1]c.vk.WriteDescriptorSet = .{std.mem.zeroInit(c.vk.WriteDescriptorSet, .{
+        .sType = c.vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = dset[0],
+        .dstBinding = tex_binding,
+        .descriptorCount = 1,
+        .descriptorType = c.vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .pImageInfo = &dii,
+    })};
+    c.vk.UpdateDescriptorSets(dev, write_dss.len, &write_dss, 0, null);
 
     return Texture{ .img = img, .img_view = img_view, .mem = mem, .dset = dset[0] };
 }
 
-pub fn createAndUplaodTexture(self: *Backend, pixels: [*]const u8, width: u32, height: u32, interpolation: dvui.enums.TextureInterpolation) !Texture {
-    //slog.info("img {}x{}; req size {}", .{ width, height, mreq.size });
-    const tex = try self.createTextureWithMem(.{
-        //.format = .b8g8r8_unorm,
-        .image_type = .@"2d",
-        .format = img_format,
+pub fn createAndUploadTexture(
+    self: *Backend,
+    pixels: [*]const u8,
+    width: u32,
+    height: u32,
+    interpolation: dvui.enums.TextureInterpolation,
+) !Texture {
+    // slog.info("img {}x{}; req size {}", .{ width, height, mreq.size });
+    const image_ci = std.mem.zeroInit(c.vk.ImageCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = c.vk.IMAGE_TYPE_2D,
+        .format = img_format, // .b8g8r8_unorm
         .extent = .{ .width = width, .height = height, .depth = 1 },
-        .mip_levels = 1,
-        .array_layers = 1,
-        .samples = .{ .@"1_bit" = true },
-        .tiling = .optimal,
-        .usage = .{
-            .transfer_dst_bit = true,
-            .sampled_bit = true,
-        },
-        .sharing_mode = .exclusive,
-        .initial_layout = .undefined,
-    }, interpolation);
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = c.vk.SAMPLE_COUNT_1_BIT,
+        .tiling = c.vk.IMAGE_TILING_OPTIMAL,
+        .usage = c.vk.IMAGE_USAGE_TRANSFER_DST_BIT | c.vk.IMAGE_USAGE_SAMPLED_BIT,
+        .sharingMode = c.vk.SHARING_MODE_EXCLUSIVE,
+        .initialLayout = c.vk.IMAGE_LAYOUT_UNDEFINED,
+    });
+    const tex = try self.createTextureWithMem(image_ci, interpolation);
     errdefer tex.deinit(self);
+
     const dev = self.dev;
     var cmdbuf = try self.beginSingleTimeCommands();
     // TODO: review what error handling should be optimal - if anything fails we should discard cmdbuf not submit it
     defer self.endSingleTimeCommands(cmdbuf) catch unreachable;
 
-    const mreq = dev.getImageMemoryRequirements(tex.img);
-    const img_staging = try self.stageToBuffer(.{
-        .flags = .{},
+    var mreq: c.vk.MemoryRequirements = undefined;
+    c.vk.GetImageMemoryRequirements(dev, tex.img, &mreq);
+
+    const buffer_ci = std.mem.zeroInit(c.vk.BufferCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .flags = 0,
         .size = mreq.size,
-        .usage = .{ .transfer_src_bit = true },
-        .sharing_mode = .exclusive,
-    }, pixels[0 .. width * height * 4]);
-    defer dev.destroyBuffer(img_staging.buf, self.vk_alloc);
-    defer dev.freeMemory(img_staging.mem, self.vk_alloc);
+        .usage = c.vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
+        .sharingMode = c.vk.SHARING_MODE_EXCLUSIVE,
+    });
+    const img_staging = try self.stageToBuffer(buffer_ci, pixels[0 .. width * height * 4]);
+    defer c.vk.DestroyBuffer(dev, img_staging.buf, self.vk_alloc);
+    defer c.vk.FreeMemory(dev, img_staging.mem, self.vk_alloc);
 
     const srr = c.vk.ImageSubresourceRange{
-        .aspect_mask = .{ .color_bit = true },
-        .base_mip_level = 0,
-        .level_count = 1,
-        .base_array_layer = 0,
-        .layer_count = 1,
+        .aspectMask = c.vk.IMAGE_ASPECT_COLOR_BIT,
+        .baseMipLevel = 0,
+        .levelCount = 1,
+        .baseArrayLayer = 0,
+        .layerCount = 1,
     };
     { // transition image to dst_optimal
-        const img_barrier = c.vk.ImageMemoryBarrier{
-            .src_access_mask = .{},
-            .dst_access_mask = .{ .transfer_write_bit = true },
-            .old_layout = .undefined,
-            .new_layout = .transfer_dst_optimal,
-            .src_queue_family_index = c.vk.QUEUE_FAMILY_IGNORED,
-            .dst_queue_family_index = c.vk.QUEUE_FAMILY_IGNORED,
+        const img_barrier = std.mem.zeroInit(c.vk.ImageMemoryBarrier, .{
+            .sType = c.vk.STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = 0,
+            .dstAccessMask = c.vk.ACCESS_TRANSFER_WRITE_BIT,
+            .oldLayout = c.vk.IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = c.vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .srcQueueFamilyIndex = c.vk.QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = c.vk.QUEUE_FAMILY_IGNORED,
             .image = tex.img,
-            .subresource_range = srr,
-        };
-        dev.cmdPipelineBarrier(cmdbuf, .{ .host_bit = true, .top_of_pipe_bit = true }, .{ .transfer_bit = true }, .{}, 0, null, 0, null, 1, @ptrCast(&img_barrier));
+            .subresourceRange = srr,
+        });
+        c.vk.CmdPipelineBarrier(
+            cmdbuf,
+            c.vk.PIPELINE_STAGE_HOST_BIT | c.vk.PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            c.vk.PIPELINE_STAGE_TRANSFER_BIT,
+            0,
+            0,
+            null,
+            0,
+            null,
+            1,
+            &img_barrier,
+        );
 
         try self.endSingleTimeCommands(cmdbuf);
         cmdbuf = try self.beginSingleTimeCommands();
     }
     { // copy staging -> img
         const buff_img_copy = c.vk.BufferImageCopy{
-            .buffer_offset = 0,
-            .buffer_row_length = 0,
-            .buffer_image_height = 0,
-            .image_subresource = .{
-                .aspect_mask = .{ .color_bit = true },
-                .mip_level = 0,
-                .base_array_layer = 0,
-                .layer_count = 1,
+            .bufferOffset = 0,
+            .bufferRowLength = 0,
+            .bufferImageHeight = 0,
+            .imageSubresource = .{
+                .aspectMask = c.vk.IMAGE_ASPECT_COLOR_BIT,
+                .mipLevel = 0,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
             },
-            .image_offset = .{ .x = 0, .y = 0, .z = 0 },
-            .image_extent = .{ .width = width, .height = height, .depth = 1 },
+            .imageOffset = .{ .x = 0, .y = 0, .z = 0 },
+            .imageExtent = .{ .width = width, .height = height, .depth = 1 },
         };
-        dev.cmdCopyBufferToImage(cmdbuf, img_staging.buf, tex.img, .transfer_dst_optimal, 1, @ptrCast(&buff_img_copy));
+        c.vk.CmdCopyBufferToImage(cmdbuf, img_staging.buf, tex.img, c.vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &buff_img_copy);
 
         try self.endSingleTimeCommands(cmdbuf);
         cmdbuf = try self.beginSingleTimeCommands();
     }
     { // transition to read only optimal
-        const img_barrier = c.vk.ImageMemoryBarrier{
-            .src_access_mask = .{ .transfer_write_bit = true },
-            .dst_access_mask = .{ .shader_read_bit = true },
-            .old_layout = .transfer_dst_optimal,
-            .new_layout = .shader_read_only_optimal,
-            .src_queue_family_index = c.vk.QUEUE_FAMILY_IGNORED,
-            .dst_queue_family_index = c.vk.QUEUE_FAMILY_IGNORED,
+        const img_barrier = std.mem.zeroInit(c.vk.ImageMemoryBarrier, .{
+            .sType = c.vk.STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = c.vk.ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = c.vk.ACCESS_SHADER_READ_BIT,
+            .oldLayout = c.vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .newLayout = c.vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            .srcQueueFamilyIndex = c.vk.QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = c.vk.QUEUE_FAMILY_IGNORED,
             .image = tex.img,
-            .subresource_range = srr,
-        };
-        dev.cmdPipelineBarrier(cmdbuf, .{ .transfer_bit = true }, .{ .fragment_shader_bit = true }, .{}, 0, null, 0, null, 1, @ptrCast(&img_barrier));
+            .subresourceRange = srr,
+        });
+        c.vk.CmdPipelineBarrier(
+            cmdbuf,
+            c.vk.PIPELINE_STAGE_TRANSFER_BIT,
+            c.vk.PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            0,
+            0,
+            null,
+            0,
+            null,
+            1,
+            &img_barrier,
+        );
 
         try self.endSingleTimeCommands(cmdbuf);
         cmdbuf = try self.beginSingleTimeCommands();
