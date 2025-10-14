@@ -920,10 +920,12 @@ const Texture = struct {
     pub fn deinit(tex: Texture, b: *Backend) void {
         const dev = b.dev;
         const vk_alloc = b.vk_alloc;
-        dev.freeDescriptorSets(b.dpool, 1, &[_]c.vk.DescriptorSet{tex.dset}) catch |err| slog.err("Failed to free descriptor set: {}", .{err});
-        dev.destroyImageView(tex.img_view, vk_alloc);
-        dev.destroyImage(tex.img, vk_alloc);
-        dev.freeMemory(tex.mem, vk_alloc);
+        check_vk(c.vk.FreeDescriptorSets(dev, b.dpool, 1, &[_]c.vk.DescriptorSet{tex.dset})) catch |err| {
+            slog.err("Failed to free descriptor set: {}", .{err});
+        };
+        c.vk.DestroyImageView(dev, tex.img_view, vk_alloc);
+        c.vk.DestroyImage(dev, tex.img, vk_alloc);
+        c.vk.FreeMemory(dev, tex.mem, vk_alloc);
     }
 };
 
@@ -1109,20 +1111,45 @@ fn stageToBuffer(
     buf_info: c.vk.BufferCreateInfo,
     contents: []const u8,
 ) !AllocatedBuffer {
-    const buf = self.dev.createBuffer(&buf_info, self.vk_alloc) catch |err| {
+    var buf: c.vk.Buffer = undefined;
+    check_vk(c.vk.CreateBuffer(self.dev, &buf_info, self.vk_alloc, &buf)) catch |err| {
         slog.err("createBuffer: {}", .{err});
         return err;
     };
-    errdefer self.dev.destroyBuffer(buf, self.vk_alloc);
-    const mreq = self.dev.getBufferMemoryRequirements(buf);
-    const mem = try self.dev.allocateMemory(&.{ .allocation_size = mreq.size, .memory_type_index = self.host_vis_mem_idx }, self.vk_alloc);
-    errdefer self.dev.freeMemory(mem, self.vk_alloc);
+    errdefer c.vk.DestroyBuffer(self.dev, buf, self.vk_alloc);
+
+    var mreq: c.vk.MemoryRequirements = undefined;
+    c.vk.GetBufferMemoryRequirements(self.dev, buf, &mreq);
+
+    const memory_ai = std.mem.zeroInit(c.vk.MemoryAllocateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = mreq.size,
+        .memoryTypeIndex = self.host_vis_mem_idx,
+    });
+    var mem: c.vk.DeviceMemory = undefined;
+    check_vk(c.vk.AllocateMemory(self.dev, &memory_ai, self.vk_alloc, &mem)) catch |err| {
+        slog.err("Failed to alloc texture mem: {}", .{err});
+        return err;
+    };
+    errdefer c.vk.FreeMemory(self.dev, mem, self.vk_alloc);
+
     const mem_offset = 0;
-    try self.dev.bindBufferMemory(buf, mem, mem_offset);
-    const data = @as([*]u8, @ptrCast((try self.dev.mapMemory(mem, mem_offset, c.vk.WHOLE_SIZE, .{})).?))[0..mreq.size];
+    try check_vk(c.vk.BindBufferMemory(self.dev, buf, mem, mem_offset));
+
+    var mem_data: ?*anyopaque = undefined;
+    try check_vk(c.vk.MapMemory(self.dev, mem, 0, c.vk.WHOLE_SIZE, 0, &mem_data));
+    const data = @as([*]u8, @ptrCast(@alignCast(mem_data)))[0..mreq.size];
     @memcpy(data[0..contents.len], contents);
-    if (!self.host_vis_coherent)
-        try self.dev.flushMappedMemoryRanges(1, &.{.{ .memory = mem, .offset = mem_offset, .size = mreq.size }});
+    if (!self.host_vis_coherent) {
+        const mem_ranges = [_]c.vk.MappedMemoryRange{std.mem.zeroInit(c.vk.MappedMemoryRange, .{
+            .sType = c.vk.STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+            .memory = mem,
+            .offset = mem_offset,
+            .size = mreq.size,
+        })};
+        try check_vk(c.vk.FlushMappedMemoryRanges(self.dev, mem_ranges.len, &mem_ranges));
+    }
+
     return .{ .buf = buf, .mem = mem };
 }
 
@@ -1130,18 +1157,24 @@ pub fn beginSingleTimeCommands(self: *Self) !c.vk.CommandBuffer {
     if (self.cpool_lock) |l| l.lockCB(l.lock_userdata);
     defer if (self.cpool_lock) |l| l.unlockCB(l.lock_userdata);
 
+    const command_buffer_ai = std.mem.zeroInit(c.vk.CommandBufferAllocateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = self.cpool,
+        .level = c.vk.COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    });
     var cmdbuf: c.vk.CommandBuffer = undefined;
-    self.dev.allocateCommandBuffers(&.{
-        .command_pool = self.cpool,
-        .level = .primary,
-        .command_buffer_count = 1,
-    }, @ptrCast(&cmdbuf)) catch |err| {
+    check_vk(c.vk.AllocateCommandBuffers(self.dev, &command_buffer_ai, &cmdbuf)) catch |err| {
         if (enable_breakpoints) @breakpoint();
         return err;
     };
-    try self.dev.beginCommandBuffer(cmdbuf, &.{
-        .flags = .{ .one_time_submit_bit = true },
+
+    const cmd_begin_info = std.mem.zeroInit(c.vk.CommandBufferBeginInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = c.vk.COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     });
+    try check_vk(c.vk.BeginCommandBuffer(cmdbuf, &cmd_begin_info));
+
     return cmdbuf;
 }
 

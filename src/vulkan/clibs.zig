@@ -78,6 +78,7 @@ pub const vk = struct {
     pub const MemoryAllocateInfo = c.VkMemoryAllocateInfo;
     pub const MemoryPropertyFlags = c.VkMemoryPropertyFlags;
     pub const MemoryRequirements = c.VkMemoryRequirements;
+    pub const MappedMemoryRange = c.VkMappedMemoryRange;
     pub const BufferUsageFlags = c.VkBufferUsageFlags;
     pub const SharingMode = c.VkSharingMode;
     pub const ShaderModule = c.VkShaderModule;
@@ -182,6 +183,7 @@ pub const vk = struct {
     pub const ERROR_COMPRESSION_EXHAUSTED_EXT = c.VK_ERROR_COMPRESSION_EXHAUSTED_EXT;
     pub const ERROR_INCOMPATIBLE_SHADER_BINARY_EXT = c.VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT;
     pub const STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    pub const STRUCTURE_TYPE_MAPPED_MEMORY_RANGE = c.VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
     pub const STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pub const STRUCTURE_TYPE_INSTANCE_CREATE_INFO = c.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     pub const STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -463,6 +465,7 @@ pub const vk = struct {
     pub const BindImageMemory = c.vkBindImageMemory;
     pub const MapMemory = c.vkMapMemory;
     pub const UnmapMemory = c.vkUnmapMemory;
+    pub const FlushMappedMemoryRanges = c.vkFlushMappedMemoryRanges;
 };
 
 //
