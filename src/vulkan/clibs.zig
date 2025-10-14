@@ -435,6 +435,7 @@ pub const vk = struct {
     pub const CmdCopyBufferToImage = c.vkCmdCopyBufferToImage;
     pub const UpdateDescriptorSets = c.vkUpdateDescriptorSets;
     pub const QueueSubmit = c.vkQueueSubmit;
+    pub const QueueWaitIdle = c.vkQueueWaitIdle;
     pub const QueuePresentKHR = c.vkQueuePresentKHR;
     pub const CreateSampler = c.vkCreateSampler;
     pub const DestroySampler = c.vkDestroySampler;

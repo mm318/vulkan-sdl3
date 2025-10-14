@@ -1179,23 +1179,25 @@ pub fn beginSingleTimeCommands(self: *Self) !c.vk.CommandBuffer {
 }
 
 pub fn endSingleTimeCommands(self: *Self, cmdbuf: c.vk.CommandBuffer) !void {
-    try self.dev.endCommandBuffer(cmdbuf);
-    defer self.dev.freeCommandBuffers(self.cpool, 1, @ptrCast(&cmdbuf));
+    try check_vk(c.vk.EndCommandBuffer(cmdbuf));
+    defer c.vk.FreeCommandBuffers(self.dev, self.cpool, 1, @ptrCast(&cmdbuf));
 
     if (self.queue_lock) |l| l.lockCB(l.lock_userdata);
     defer if (self.queue_lock) |l| l.unlockCB(l.lock_userdata);
-    const qs = [_]c.vk.SubmitInfo{.{
-        .wait_semaphore_count = 0,
-        .p_wait_semaphores = null,
-        .p_wait_dst_stage_mask = null,
-        .command_buffer_count = 1,
-        .p_command_buffers = @ptrCast(&cmdbuf),
-        .signal_semaphore_count = 0,
-        .p_signal_semaphores = null,
-    }};
-    try self.dev.queueSubmit(self.queue, 1, &qs, null);
+    const qs = [_]c.vk.SubmitInfo{std.mem.zeroInit(c.vk.SubmitInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_SUBMIT_INFO,
+        .waitSemaphoreCount = 0,
+        .pWaitSemaphores = null,
+        .pWaitDstStageMask = null,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &cmdbuf,
+        .signalSemaphoreCount = 0,
+        .pSignalSemaphores = null,
+    })};
+    try check_vk(c.vk.QueueSubmit(self.queue, qs.len, &qs, null));
+
     // TODO: is there better way to sync this than stalling the queue? barriers or something
-    self.dev.queueWaitIdle(self.queue) catch |err| {
+    check_vk(c.vk.QueueWaitIdle(self.queue)) catch |err| {
         slog.warn("queueWaitIdle failed: {}", .{err});
     };
 }
