@@ -1401,8 +1401,12 @@ pub fn cleanup(self: *Self) void {
     self.materials.deinit();
     self.renderables.deinit(self.allocator);
 
-    // TODO: gui
-    // c.cimgui.impl_vulkan.Shutdown();
+    if (self.dvui_window) |*dvui_window| {
+        dvui_window.deinit();
+    }
+    if (self.dvui_backend) |*dvui_backend| {
+        dvui_backend.deinit();
+    }
 
     for (self.buffer_deletion_queue.items) |*entry| {
         entry.delete(self);
@@ -1438,13 +1442,6 @@ pub fn cleanup(self: *Self) void {
     c.vk.DestroyInstance(self.instance, vk_alloc_cbs);
     c.SDL.DestroyWindow(self.sdl_window);
     c.SDL.Quit();
-
-    if (self.dvui_window) |*dvui_window| {
-        dvui_window.deinit();
-    }
-    if (self.dvui_backend) |*dvui_backend| {
-        dvui_backend.deinit();
-    }
 }
 
 fn load_textures(self: *Self) void {
@@ -1609,6 +1606,81 @@ fn upload_mesh(self: *Self, mesh: *Mesh) void {
     c.vma.DestroyBuffer(self.vma_allocator, staging_buffer.buffer, staging_buffer.allocation);
 }
 
+// both dvui and SDL drawing
+fn gui_frame() !void {
+    {
+        var m = dvui.menu(@src(), .horizontal, .{ .background = true, .expand = .horizontal });
+        defer m.deinit();
+
+        _ = dvui.checkbox(@src(), &dvui.Examples.show_demo_window, "show demo", .{ .gravity_x = 0.1 });
+        // _ = try dvui.checkbox(@src(), &sleep_when_inactive, "sleep when inactive", .{ .gravity_x = 0.1 });
+
+        // var choice: usize = 0;
+        // _ = try dvui.dropdown(@src(), &.{ "immediate (no vsync)", "fifo", "mailbox" }, &choice, .{});
+    }
+
+    // look at demo() for examples of dvui widgets, shows in a floating window
+    dvui.Examples.demo();
+}
+
+fn gui_stats(vk_backend: *const DvuiBackend.DvuiVkRenderer) !void {
+    const stats = vk_backend.stats;
+
+    var m = dvui.box(@src(), .{}, .{
+        .background = true,
+        .expand = null,
+        .gravity_x = 1.0,
+        .min_size_content = .{ .w = 300, .h = 0 },
+    });
+    defer m.deinit();
+    var prc: f32 = 0; // progress bar percent [0..1]
+
+    dvui.labelNoFmt(@src(), "DVUI VK Backend stats", .{}, .{
+        .expand = .horizontal,
+        .gravity_x = 0.5,
+        .font_style = .heading,
+    });
+    dvui.label(@src(), "draw_calls:  {}", .{stats.draw_calls}, .{ .expand = .horizontal });
+
+    const idx_max = vk_backend.current_frame.idx_data.len / @sizeOf(DvuiBackend.DvuiVkRenderer.Indice);
+    dvui.label(@src(), "indices: {} / {}", .{ stats.indices, idx_max }, .{ .expand = .horizontal });
+    prc = @as(f32, @floatFromInt(stats.indices)) / @as(f32, @floatFromInt(idx_max));
+    dvui.progress(@src(), .{ .percent = prc }, .{
+        .expand = .horizontal,
+        .color_accent = dvui.Color.fromHSLuv(@max(12, (1 - prc * prc) * 155), 99, 50, 100),
+    });
+
+    const verts_max = vk_backend.current_frame.vtx_data.len / @sizeOf(DvuiBackend.DvuiVkRenderer.Vertex);
+    dvui.label(@src(), "vertices:  {} / {}", .{ stats.verts, verts_max }, .{ .expand = .horizontal });
+    prc = @as(f32, @floatFromInt(stats.verts)) / @as(f32, @floatFromInt(verts_max));
+    dvui.progress(@src(), .{ .percent = prc }, .{
+        .expand = .horizontal,
+        .color_accent = dvui.Color.fromHSLuv(@max(12, (1 - prc * prc) * 155), 99, 50, 100),
+    });
+
+    dvui.label(@src(), "Textures:", .{}, .{ .expand = .horizontal, .font_style = .caption_heading });
+    dvui.label(@src(), "count:  {}", .{stats.textures_alive}, .{ .expand = .horizontal });
+    dvui.label(@src(), "mem (gpu): {Bi:.1}", .{stats.textures_mem}, .{ .expand = .horizontal });
+
+    dvui.label(@src(), "Static/Preallocated memory (gpu):", .{}, .{ .expand = .horizontal, .font_style = .caption_heading });
+    const prealloc_mem = vk_backend.host_vis_data.len;
+    dvui.label(@src(), "total:  {Bi:.1}", .{prealloc_mem}, .{ .expand = .horizontal });
+    const prealloc_mem_frame = prealloc_mem / vk_backend.frames.len;
+    const prealloc_mem_frame_used = stats.indices * @sizeOf(DvuiBackend.DvuiVkRenderer.Indice) +
+        stats.verts * @sizeOf(DvuiBackend.DvuiVkRenderer.Vertex);
+    dvui.label(
+        @src(),
+        "current frame:  {Bi:.1} / {Bi:.1}",
+        .{ prealloc_mem_frame_used, prealloc_mem_frame },
+        .{ .expand = .horizontal },
+    );
+    prc = @as(f32, @floatFromInt(prealloc_mem_frame_used)) / @as(f32, @floatFromInt(prealloc_mem_frame));
+    dvui.progress(@src(), .{ .percent = prc }, .{
+        .expand = .horizontal,
+        .color_accent = dvui.Color.fromHSLuv(@max(12, (1 - prc * prc) * 155), 99, 50, 100),
+    });
+}
+
 pub fn run(self: *Self) void {
     // static counter
     const TitleDelay = struct {
@@ -1689,16 +1761,10 @@ pub fn run(self: *Self) void {
         }
 
         // TODO: gui
-        // {
-        //     var open = true;
-        //     // Imgui frame
-        //     c.cimgui.impl_vulkan.NewFrame();
-        //     c.cimgui.impl_sdl3.NewFrame();
-        //     c.cimgui.NewFrame();
-        //     c.cimgui.ShowDemoWindow(&open);
-
-        //     c.cimgui.Render();
-        // }
+        if (self.dvui_backend) |backend| {
+            try gui_frame();
+            try gui_stats(&backend.renderer);
+        }
 
         self.draw();
         self.frame_number +%= 1;
@@ -1793,7 +1859,6 @@ fn draw(self: *Self) void {
     self.draw_objects(cmd, self.renderables.items);
 
     // TODO: gui
-    // c.cimgui.impl_vulkan.RenderDrawData(c.cimgui.GetDrawData(), cmd);
 
     c.vk.CmdEndRenderPass(cmd);
     check_vk(c.vk.EndCommandBuffer(cmd)) catch @panic("Failed to end command buffer");

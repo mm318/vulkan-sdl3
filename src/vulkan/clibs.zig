@@ -503,6 +503,7 @@ pub const SDL = struct {
     pub const Texture = c.SDL_Texture;
     pub const Event = c.SDL_Event;
     pub const Bool = c.bool;
+    pub const Rect = c.SDL_Rect;
 
     pub const CreateWindow = c.SDL_CreateWindow;
     pub const DestroyWindow = c.SDL_DestroyWindow;
@@ -510,12 +511,15 @@ pub const SDL = struct {
     pub const GetSystemTheme = c.SDL_GetSystemTheme;
     pub const SetWindowTitle = c.SDL_SetWindowTitle;
     pub const ShowWindow = c.SDL_ShowWindow;
+    pub const OpenURL = c.SDL_OpenURL;
 
     pub const CreateRenderer = c.SDL_CreateRenderer;
     pub const DestroyRenderer = c.SDL_DestroyRenderer;
     pub const GetCurrentRenderOutputSize = c.SDL_GetCurrentRenderOutputSize;
+    pub const GetRenderClipRect = c.SDL_GetRenderClipRect;
 
     pub const Init = c.SDL_Init;
+    pub const PushEvent = c.SDL_PushEvent;
     pub const PollEvent = c.SDL_PollEvent;
     pub const Quit = c.SDL_Quit;
     pub const GetError = c.SDL_GetError;
@@ -527,6 +531,7 @@ pub const SDL = struct {
     pub const EVENT_KEY_DOWN = c.SDL_EVENT_KEY_DOWN;
     pub const EVENT_KEY_UP = c.SDL_EVENT_KEY_UP;
     pub const EVENT_QUIT = c.SDL_EVENT_QUIT;
+    pub const EVENT_USER = c.SDL_EVENT_USER;
     pub const EVENT_WINDOW_MAXIMIZED = c.SDL_EVENT_WINDOW_MAXIMIZED;
     pub const EVENT_WINDOW_MINIMIZED = c.SDL_EVENT_WINDOW_MINIMIZED;
     pub const EVENT_WINDOW_RESIZED = c.SDL_EVENT_WINDOW_RESIZED;

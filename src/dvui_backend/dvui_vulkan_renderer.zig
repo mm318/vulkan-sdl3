@@ -35,6 +35,8 @@ const Self = @This();
 //  see: dvui/Backend.zig
 //
 const Backend = Self;
+const GenericError = dvui.Backend.GenericError;
+const TextureError = dvui.Backend.TextureError;
 
 pub const Vertex = dvui.Vertex;
 pub const Indice = u16;
@@ -488,65 +490,6 @@ pub fn deinit(self: *Self, alloc: std.mem.Allocator) void {
     self.dev.destroyRenderPass(self.render_pass_texture_target, self.vk_alloc);
 }
 
-pub fn backend(self: *Self) dvui.Backend {
-    var b = dvui.Backend.init(@as(*dvui.backend, @ptrCast(self)), dvui.backend);
-    {
-        // hijack base backend by replacing vtable with our own
-        // WARNING: this is not safe and asking for trouble, but done to allow only implementing rendering
-        // TODO: figure out how to do this cleanly
-        const implementation = Self;
-        { // manual type checks
-            // When updating dvui: copy paste from dvui.Backend.VTable.I here as RefVTable
-            const Context = Self;
-            const RefVTable = struct {
-                pub const nanoTime = *const fn (ctx: Context) i128;
-                pub const sleep = *const fn (ctx: Context, ns: u64) void;
-
-                pub const begin = *const fn (ctx: Context, arena: std.mem.Allocator) void;
-                pub const end = *const fn (ctx: Context) void;
-
-                pub const pixelSize = *const fn (ctx: Context) dvui.Size.Physical;
-                pub const windowSize = *const fn (ctx: Context) dvui.Size.Natural;
-                pub const contentScale = *const fn (ctx: Context) f32;
-
-                pub const drawClippedTriangles = *const fn (ctx: Context, texture: ?dvui.Texture, vtx: []const dvui.Vertex, idx: []const u16, clipr: ?dvui.Rect.Physical) void;
-
-                pub const textureCreate = *const fn (ctx: Context, pixels: [*]u8, width: u32, height: u32, interpolation: dvui.enums.TextureInterpolation) dvui.Texture;
-                pub const textureDestroy = *const fn (ctx: Context, texture: dvui.Texture) void;
-                pub const textureFromTarget = *const fn (ctx: Context, texture: dvui.TextureTarget) dvui.Texture;
-
-                pub const textureCreateTarget = *const fn (ctx: Context, width: u32, height: u32, interpolation: dvui.enums.TextureInterpolation) error{ OutOfMemory, TextureCreate }!dvui.TextureTarget;
-                pub const textureReadTarget = *const fn (ctx: Context, texture: dvui.TextureTarget, pixels_out: [*]u8) error{TextureRead}!void;
-                pub const renderTarget = *const fn (ctx: Context, texture: ?dvui.TextureTarget) void;
-
-                pub const clipboardText = *const fn (ctx: Context) error{OutOfMemory}![]const u8;
-                pub const clipboardTextSet = *const fn (ctx: Context, text: []const u8) error{OutOfMemory}!void;
-
-                pub const openURL = *const fn (ctx: Context, url: []const u8) error{OutOfMemory}!void;
-                pub const refresh = *const fn (ctx: Context) void;
-            };
-            if (@sizeOf(RefVTable) != @sizeOf(dvui.Backend.VTable.I)) @compileError("Backend not up to date with dvui!");
-            const I = RefVTable; // autofix
-            inline for (@typeInfo(I).@"struct".decls) |decl| {
-                const hasField = @hasDecl(implementation, decl.name);
-                const DeclType = @field(I, decl.name);
-                if (!hasField) @compileError("Backend type " ++ @typeName(implementation) ++ " has no declaration '" ++ decl.name ++ ": " ++ @typeName(DeclType) ++ "'");
-            }
-        }
-        const I = dvui.Backend.VTable.I;
-        inline for (@typeInfo(I).@"struct".decls) |decl| {
-            // DANGER: bypasses type safety here, but it should be cought above as long as its kept up to date
-            @field(b.vtable, decl.name) = @ptrCast(&@field(implementation, decl.name));
-        }
-        return b;
-    }
-}
-
-pub const RenderPassInfo = struct {
-    framebuffer: c.vk.Framebuffer,
-    render_area: c.vk.Rect2D,
-};
-
 /// Begins new frame
 /// Command buffer has to be in a render pass
 pub fn beginFrame(self: *Self, cmdbuf: c.vk.CommandBuffer, framebuffer_size: c.vk.Extent2D) void {
@@ -638,7 +581,13 @@ pub fn pixelSize(self: *Backend) Size {
 //     return self.base_backend.contentScale();
 // }
 
-pub fn drawClippedTriangles(self: *Backend, texture_: ?dvui.Texture, vtx: []const Vertex, idx: []const Indice, clipr: ?dvui.Rect) void {
+pub fn drawClippedTriangles(
+    self: *Backend,
+    texture_: ?dvui.Texture,
+    vtx: []const Vertex,
+    idx: []const Indice,
+    clipr: ?dvui.Rect.Physical,
+) void {
     if (self.render_target != null) return; // TODO: render to textures
     const texture: ?*anyopaque = if (texture_) |t| @as(*anyopaque, @ptrCast(@alignCast(t.ptr))) else null;
     const dev = self.dev;
@@ -729,7 +678,13 @@ fn findEmptyTextureSlot(self: *Backend) ?TextureIdx {
     return null;
 }
 
-pub fn textureCreate(self: *Backend, pixels: [*]u8, width: u32, height: u32, interpolation: dvui.enums.TextureInterpolation) dvui.Texture {
+pub fn textureCreate(
+    self: *Backend,
+    pixels: [*]const u8,
+    width: u32,
+    height: u32,
+    interpolation: dvui.enums.TextureInterpolation,
+) dvui.Texture {
     const slot = self.findEmptyTextureSlot() orelse return .{ .ptr = invalid_texture, .width = 1, .height = 1 };
     const out_tex: *Texture = &self.textures[slot];
     const tex = self.createAndUploadTexture(pixels, width, height, interpolation) catch |err| {
@@ -745,9 +700,17 @@ pub fn textureCreate(self: *Backend, pixels: [*]u8, width: u32, height: u32, int
     //slog.debug("textureCreate {} ({x}) | {}", .{ slot, @intFromPtr(out_tex), self.stats.textures_alive });
     return .{ .ptr = @ptrCast(out_tex), .width = width, .height = height };
 }
-pub fn textureCreateTarget(self: *Backend, width: u32, height: u32, interpolation: dvui.enums.TextureInterpolation) !dvui.Texture {
+
+pub fn textureCreateTarget(
+    self: *Backend,
+    width: u32,
+    height: u32,
+    interpolation: dvui.enums.TextureInterpolation,
+) GenericError!dvui.TextureTarget {
     const enable = false;
-    if (!enable) return error.NotSupported else {
+    if (!enable) {
+        return error.BackendError;
+    } else {
         const target_slot = blk: {
             for (self.texture_targets, 0..) |*tt, s| {
                 if (tt.isNull()) break :blk s;
@@ -801,12 +764,13 @@ pub fn textureCreateTarget(self: *Backend, width: u32, height: u32, interpolatio
         return &self.texture_targets[target_slot];
     }
 }
-pub fn textureRead(self: *Backend, texture: dvui.Texture, pixels_out: [*]u8, width: u32, height: u32) !void {
+
+pub fn textureRead(_: *Backend, texture: dvui.Texture, pixels_out: [*]u8, width: u32, height: u32) TextureError!void {
     // return try self.base_backend.textureRead(texture, pixels_out, width, height);
     slog.debug("textureRead({}, {*}, {}x{}) Not implemented!", .{ texture, pixels_out, width, height });
-    _ = self; // autofix
-    return error.NotSupported;
+    return error.NotImplemented;
 }
+
 pub fn textureDestroy(self: *Backend, texture: dvui.Texture) void {
     if (texture.ptr == invalid_texture) return;
     const dslot = self.destroy_textures_offset;
@@ -819,24 +783,23 @@ pub fn textureDestroy(self: *Backend, texture: dvui.Texture) void {
 }
 
 /// Read pixel data (RGBA) from `texture` into `pixels_out`.
-pub fn textureReadTarget(self: *Backend, texture: dvui.TextureTarget, pixels_out: [*]u8) !void {
+pub fn textureReadTarget(self: *Backend, texture: dvui.TextureTarget, pixels_out: [*]u8) TextureError!void {
     // return self.base_backend.textureReadTarget(self, texture, pixels_out);
     _ = pixels_out;
     _ = self;
     _ = texture;
-    return error.NotSupported;
+    return error.NotImplemented;
 }
 
 /// Convert texture target made with `textureCreateTarget` into return texture
 /// as if made by `textureCreate`.  After this call, texture target will not be
 /// used by dvui.
 pub fn textureFromTarget(self: *Backend, texture: dvui.TextureTarget) dvui.Texture {
-    // return self.base_backend.textureFromTarget(self, texture);
-    _ = texture;
-    return .{ .ptr = @ptrCast(&self.error_texture), .width = 0, .height = 0 };
+    _ = self;
+    return .{ .ptr = texture.ptr, .width = texture.width, .height = texture.height };
 }
 
-pub fn renderTarget(self: *Backend, texture: dvui.Texture) void {
+pub fn renderTarget(self: *Backend, texture: ?dvui.TextureTarget) GenericError!void {
     // TODO: all errors are set to unreachable, add handling?
     slog.debug("renderTarget({?})", .{texture});
     const dev = self.dev;
@@ -876,15 +839,19 @@ pub fn renderTarget(self: *Backend, texture: dvui.Texture) void {
         dev.cmdSetViewport(cmdbuf, 0, 1, @ptrCast(&viewport));
     }
 }
+
 // pub fn clipboardText(self: *Backend) error{OutOfMemory}![]const u8 {
 //     return self.base_backend.clipboardText();
 // }
+
 // pub fn clipboardTextSet(self: *Backend, text: []const u8) error{OutOfMemory}!void {
 //     return self.base_backend.clipboardTextSet(text);
 // }
+
 // pub fn openURL(self: *Backend, url: []const u8) error{OutOfMemory}!void {
 //     return self.base_backend.openURL(url);
 // }
+
 // pub fn refresh(self: *Backend) void {
 //     return self.base_backend.refresh();
 // }
