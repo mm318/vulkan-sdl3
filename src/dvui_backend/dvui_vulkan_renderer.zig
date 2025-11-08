@@ -497,7 +497,8 @@ pub fn beginFrame(self: *Self, cmdbuf: c.vk.CommandBuffer, framebuffer_size: c.v
     self.framebuffer_size = framebuffer_size;
 
     // advance frame pointer,
-    const current_frame_idx = (@intFromPtr(self.current_frame) - @intFromPtr(self.frames.ptr) + @sizeOf(FrameData)) / @sizeOf(FrameData) % self.frames.len;
+    const current_frame_idx = (@intFromPtr(self.current_frame) - @intFromPtr(self.frames.ptr) +
+        @sizeOf(FrameData)) / @sizeOf(FrameData) % self.frames.len;
     const cf = &self.frames[current_frame_idx];
     self.current_frame = cf;
 
@@ -624,7 +625,7 @@ pub fn drawClippedTriangles(
             .offset = .{ .x = 0, .y = 0 },
             .extent = self.win_extent,
         };
-        dev.cmdSetScissor(cmdbuf, 0, 1, @ptrCast(&scissor));
+        c.vk.CmdSetScissor(cmdbuf, 0, 1, @ptrCast(&scissor));
     }
 
     const idx_offset: u32 = cf.idx_offset;
@@ -634,32 +635,43 @@ pub fn drawClippedTriangles(
         { // indices
             const dst = cf.idx_data[cf.idx_offset..][0..idx_bytes];
             cf.idx_offset += @intCast(dst.len);
-            modified_ranges[0] = .{ .memory = self.host_vis_mem, .offset = @intFromPtr(dst.ptr) - @intFromPtr(self.host_vis_data.ptr), .size = dst.len };
+            modified_ranges[0] = std.mem.zeroInit(c.vk.MappedMemoryRange, .{
+                .sType = c.vk.STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+                .memory = self.host_vis_mem,
+                .offset = @intFromPtr(dst.ptr) - @intFromPtr(self.host_vis_data.ptr),
+                .size = dst.len,
+            });
             @memcpy(dst, std.mem.sliceAsBytes(idx));
         }
         { // vertices
             const dst = cf.vtx_data[cf.vtx_offset..][0..vtx_bytes];
             cf.vtx_offset += @intCast(dst.len);
-            modified_ranges[1] = .{ .memory = self.host_vis_mem, .offset = @intFromPtr(dst.ptr) - @intFromPtr(self.host_vis_data.ptr), .size = dst.len };
+            modified_ranges[1] = std.mem.zeroInit(c.vk.MappedMemoryRange, .{
+                .sType = c.vk.STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+                .memory = self.host_vis_mem,
+                .offset = @intFromPtr(dst.ptr) - @intFromPtr(self.host_vis_data.ptr),
+                .size = dst.len,
+            });
             @memcpy(dst, std.mem.sliceAsBytes(vtx));
         }
-        if (!self.host_vis_coherent)
-            dev.flushMappedMemoryRanges(modified_ranges.len, &modified_ranges) catch |err|
+        if (!self.host_vis_coherent) {
+            check_vk(c.vk.FlushMappedMemoryRanges(dev, modified_ranges.len, &modified_ranges)) catch |err|
                 slog.err("flushMappedMemoryRanges: {}", .{err});
+        }
     }
 
     if (@sizeOf(Indice) != 2) unreachable;
-    dev.cmdBindIndexBuffer(cmdbuf, cf.idx_buff, idx_offset, .uint16);
-    dev.cmdBindVertexBuffers(cmdbuf, 0, 1, @ptrCast(&cf.vtx_buff), &[_]c.vk.DeviceSize{vtx_offset});
+    c.vk.CmdBindIndexBuffer(cmdbuf, cf.idx_buff, idx_offset, c.vk.INDEX_TYPE_UINT16);
+    c.vk.CmdBindVertexBuffers(cmdbuf, 0, 1, @ptrCast(&cf.vtx_buff), &[_]c.vk.DeviceSize{vtx_offset});
     var dset: c.vk.DescriptorSet = if (texture == null) self.dummy_texture.dset else blk: {
         if (texture.? == invalid_texture) break :blk self.error_texture.dset;
         const tex = @as(*Texture, @ptrCast(@alignCast(texture)));
         if (tex.trace.index < tex.trace.addrs.len / 2 + 1) tex.trace.addAddr(@returnAddress(), "render"); // if trace has some free room, trace this
         break :blk tex.dset;
     };
-    dev.cmdBindDescriptorSets(
+    c.vk.CmdBindDescriptorSets(
         cmdbuf,
-        .graphics,
+        c.vk.PIPELINE_BIND_POINT_GRAPHICS,
         self.pipeline_layout,
         0,
         1,
@@ -667,7 +679,7 @@ pub fn drawClippedTriangles(
         0,
         null,
     );
-    dev.cmdDrawIndexed(cmdbuf, @intCast(idx.len), 1, 0, 0, 0);
+    c.vk.CmdDrawIndexed(cmdbuf, @intCast(idx.len), 1, 0, 0, 0);
 }
 
 fn findEmptyTextureSlot(self: *Backend) ?TextureIdx {
@@ -695,9 +707,13 @@ pub fn textureCreate(
     out_tex.* = tex;
     out_tex.trace.addAddr(@returnAddress(), "create");
 
+    var mreq: c.vk.MemoryRequirements = undefined;
+    c.vk.GetImageMemoryRequirements(self.dev, out_tex.img, &mreq);
+
     self.stats.textures_alive += 1;
-    self.stats.textures_mem += self.dev.getImageMemoryRequirements(out_tex.img).size;
+    self.stats.textures_mem += mreq.size;
     //slog.debug("textureCreate {} ({x}) | {}", .{ slot, @intFromPtr(out_tex), self.stats.textures_alive });
+
     return .{ .ptr = @ptrCast(out_tex), .width = width, .height = height };
 }
 
@@ -802,41 +818,42 @@ pub fn textureFromTarget(self: *Backend, texture: dvui.TextureTarget) dvui.Textu
 pub fn renderTarget(self: *Backend, texture: ?dvui.TextureTarget) GenericError!void {
     // TODO: all errors are set to unreachable, add handling?
     slog.debug("renderTarget({?})", .{texture});
-    const dev = self.dev;
 
     if (self.render_target) |cmdbuf| { // finalize previous render target
         self.render_target = null;
-        dev.cmdEndRenderPass(cmdbuf);
+        c.vk.CmdEndRenderPass(cmdbuf);
         self.endSingleTimeCommands(cmdbuf) catch unreachable;
     }
 
-    const tt: *TextureTarget = @ptrCast(@alignCast(texture.ptr));
+    const tt: *TextureTarget = if (texture) |t| @ptrCast(@alignCast(t.ptr)) else return;
     const cmdbuf = self.beginSingleTimeCommands() catch unreachable;
     self.render_target = cmdbuf;
 
     { // begin render-pass & reset viewport
         const clear = c.vk.ClearValue{
-            .color = .{ .float_32 = .{ 0, 0, 0, 0 } },
+            .color = .{ .float32 = .{ 0, 0, 0, 0 } },
         };
         const viewport = c.vk.Viewport{
             .x = 0,
             .y = 0,
             .width = @floatFromInt(tt.fb_size.width),
             .height = @floatFromInt(tt.fb_size.height),
-            .min_depth = 0,
-            .max_depth = 1,
+            .minDepth = 0,
+            .maxDepth = 1,
         };
-        dev.cmdBeginRenderPass(cmdbuf, &.{
-            .render_pass = self.render_pass_texture_target,
+        const render_pass_begin_info = std.mem.zeroInit(c.vk.RenderPassBeginInfo, .{
+            .sType = c.vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+            .renderPass = self.render_pass_texture_target,
             .framebuffer = tt.framebuffer,
-            .render_area = c.vk.Rect2D{
+            .renderArea = .{
                 .offset = .{ .x = 0, .y = 0 },
                 .extent = tt.fb_size,
             },
-            .clear_value_count = 1,
-            .p_clear_values = @ptrCast(&clear),
-        }, .@"inline");
-        dev.cmdSetViewport(cmdbuf, 0, 1, @ptrCast(&viewport));
+            .clearValueCount = 1,
+            .pClearValues = &clear,
+        });
+        c.vk.CmdBeginRenderPass(cmdbuf, &render_pass_begin_info, c.vk.SUBPASS_CONTENTS_INLINE);
+        c.vk.CmdSetViewport(cmdbuf, 0, 1, @ptrCast(&viewport));
     }
 }
 
