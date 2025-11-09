@@ -1760,12 +1760,6 @@ pub fn run(self: *Self) void {
             self.camera_pos = Vec3.add(self.camera_pos, camera_delta);
         }
 
-        // TODO: gui
-        if (self.dvui_backend) |backend| {
-            try gui_frame();
-            try gui_stats(&backend.renderer);
-        }
-
         self.draw();
         self.frame_number +%= 1;
 
@@ -1858,7 +1852,22 @@ fn draw(self: *Self) void {
     // Objects
     self.draw_objects(cmd, self.renderables.items);
 
-    // TODO: gui
+    // gui
+    if (self.dvui_backend) |*backend| {
+        backend.renderer.beginFrame(cmd, self.swapchain_extent);
+
+        if (self.dvui_window) |*win| {
+            // beginWait coordinates with waitTime below to run frames only when needed
+            const nstime = win.beginWait(false);
+            win.begin(nstime) catch @panic("win.begin() failed");
+
+            gui_frame() catch @panic("Failed to draw gui_frame()");
+            gui_stats(&backend.renderer) catch @panic("Failed to draw gui_stats()");
+
+            // const end_micros = try win.end(.{});
+            _ = win.end(.{}) catch @panic("win.end() failed");
+        }
+    }
 
     c.vk.CmdEndRenderPass(cmd);
     check_vk(c.vk.EndCommandBuffer(cmd)) catch @panic("Failed to end command buffer");

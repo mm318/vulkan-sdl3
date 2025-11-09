@@ -78,13 +78,8 @@ pub fn preferredColorScheme(_: *SDLBackend) ?dvui.enums.ColorScheme {
 
 pub fn begin(self: *SDLBackend, arena: std.mem.Allocator) !void {
     self.arena = arena;
-    const size = self.pixelSize();
-    try toErr(c.SDL.SetRenderClipRect(self.renderer, &c.SDL.Rect{
-        .x = 0,
-        .y = 0,
-        .w = @intFromFloat(size.w),
-        .h = @intFromFloat(size.h),
-    }), "SDL_SetRenderClipRect in begin");
+    const win_size = self.windowSize();
+    self.renderer.begin(win_size);
 }
 
 pub fn end(_: *SDLBackend) !void {}

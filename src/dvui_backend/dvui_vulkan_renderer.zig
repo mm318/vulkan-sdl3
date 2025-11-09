@@ -206,9 +206,13 @@ const FrameData = struct {
         // free textures
         for (f.destroy_textures_offset..(f.destroy_textures_offset + f.destroy_textures_len)) |i| {
             const tidx = b.destroy_textures[i % b.destroy_textures.len]; // wrap around on overflow
+
+            var mreq: c.vk.MemoryRequirements = undefined;
+            c.vk.GetImageMemoryRequirements(b.dev, b.textures[tidx].img, &mreq);
+
             // just for debug and monitoring
             b.stats.textures_alive -= 1;
-            b.stats.textures_mem -= b.dev.getImageMemoryRequirements(b.textures[tidx].img).size;
+            b.stats.textures_mem -= mreq.size;
 
             //slog.debug("destroy texture {}({x}) | {}", .{ tidx, @intFromPtr(&b.textures[tidx]), b.stats.textures_alive });
             b.textures[tidx].deinit(b);
@@ -532,18 +536,16 @@ pub fn endFrame(self: *Self) c.vk.CommandBuffer {
 // }
 
 //pub const begin = Override.begin;
-pub fn begin(self: *Self) void {
+pub fn begin(self: *Self, win_size: dvui.Size.Natural) void {
     self.render_target = null;
     if (self.cmdbuf == null) @panic("dvui_vulkan_renderer: Command bufer not set before rendering started!");
     // TODO: FIXME: get rid of this or do it more cleanly
     //  WARNING: very risky as sdl_backend calls renderer, but have no other way to pass through arena
     // self.base_backend.begin(arena); // call base
 
-    const dev = self.dev;
     const cmdbuf = self.cmdbuf;
-    dev.cmdBindPipeline(cmdbuf, .graphics, self.pipeline);
+    c.vk.CmdBindPipeline(cmdbuf, c.vk.PIPELINE_BIND_POINT_GRAPHICS, self.pipeline);
 
-    const win_size = self.windowSize();
     const extent: c.vk.Extent2D = .{ .width = @intFromFloat(win_size.w), .height = @intFromFloat(win_size.h) };
     self.win_extent = extent;
     const viewport = c.vk.Viewport{
@@ -551,10 +553,10 @@ pub fn begin(self: *Self) void {
         .y = 0,
         .width = win_size.w,
         .height = win_size.h,
-        .min_depth = 0,
-        .max_depth = 1,
+        .minDepth = 0,
+        .maxDepth = 1,
     };
-    dev.cmdSetViewport(cmdbuf, 0, 1, @ptrCast(&viewport));
+    c.vk.CmdSetViewport(cmdbuf, 0, 1, @ptrCast(&viewport));
 
     const PushConstants = struct {
         view_scale: @Vector(2, f32),
@@ -564,7 +566,14 @@ pub fn begin(self: *Self) void {
         .view_scale = .{ 2.0 / win_size.w, 2.0 / win_size.h },
         .view_translate = .{ -1.0, -1.0 },
     };
-    dev.cmdPushConstants(cmdbuf, self.pipeline_layout, .{ .vertex_bit = true }, 0, @sizeOf(PushConstants), &push_constants);
+    c.vk.CmdPushConstants(
+        cmdbuf,
+        self.pipeline_layout,
+        c.vk.SHADER_STAGE_VERTEX_BIT,
+        0,
+        @sizeOf(PushConstants),
+        &push_constants,
+    );
 }
 
 pub fn end(_: *Backend) void {}
@@ -1076,9 +1085,9 @@ fn createPipeline(
         dev,
         null,
         1,
-        @ptrCast(&gpci),
+        &gpci,
         vk_alloc,
-        @ptrCast(&pipeline),
+        &pipeline,
     ));
 
     return pipeline;

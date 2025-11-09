@@ -518,6 +518,7 @@ pub const SDL = struct {
     pub const DestroyRenderer = c.SDL_DestroyRenderer;
     pub const GetCurrentRenderOutputSize = c.SDL_GetCurrentRenderOutputSize;
     pub const GetRenderClipRect = c.SDL_GetRenderClipRect;
+    pub const SetRenderClipRect = c.SDL_SetRenderClipRect;
 
     pub const Init = c.SDL_Init;
     pub const PushEvent = c.SDL_PushEvent;
