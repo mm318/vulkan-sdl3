@@ -125,9 +125,6 @@ pub const Stats = struct {
     textures_mem: usize = 0,
 };
 
-// we need stable pointer to this, but its not worth allocating it, so make it global
-var g_dev_wrapper: c.vk.DeviceWrapper = undefined;
-
 // not owned by us:
 dev: c.vk.Device,
 pdev: c.vk.PhysicalDevice,
@@ -140,20 +137,21 @@ cpool: c.vk.CommandPool = null,
 cpool_lock: ?LockCallbacks = null,
 
 // owned by us
-render_pass_texture_target: c.vk.RenderPass,
 samplers: [2]c.vk.Sampler,
 frames: []FrameData,
 textures: []Texture,
-texture_targets: []TextureTarget,
 destroy_textures_offset: TextureIdx = 0,
 destroy_textures: []TextureIdx,
 pipeline: c.vk.Pipeline,
 pipeline_layout: c.vk.PipelineLayout,
 dset_layout: c.vk.DescriptorSetLayout,
-render_target: ?c.vk.CommandBuffer = null,
 current_frame: *FrameData, // points somewhere in frames
 
-win_extent: c.vk.Extent2D = undefined,
+/// if set render to render texture instead of default cmdbuf
+render_target: ?c.vk.CommandBuffer = null,
+render_target_pass: c.vk.RenderPass,
+render_target_pipeline: c.vk.Pipeline,
+
 dummy_texture: Texture = undefined, // dummy/null white texture
 error_texture: Texture = undefined,
 
@@ -161,13 +159,14 @@ host_vis_mem_idx: u32,
 host_vis_mem: c.vk.DeviceMemory,
 host_vis_coherent: bool,
 host_vis_data: []u8, // mapped host_vis_mem
-//host_vis_offset: usize = 0, // linearly advaces and wraps to 0 - assumes size is large enough to not overwrite old still in flight data
 device_local_mem_idx: u32,
 
 framebuffer_size: c.vk.Extent2D = .{ .width = 0, .height = 0 },
 vtx_overflow_logged: bool = false,
 idx_overflow_logged: bool = false,
-stats: Stats = .{}, // just for info / dbg
+
+// just for info / dbg
+stats: Stats = .{},
 
 /// for potentially multi threaded shared resources, lock callbacks can be set that will be called
 const LockCallbacks = struct {
@@ -372,8 +371,6 @@ pub fn init(alloc: std.mem.Allocator, opt: InitOptions) !Self {
     var dsl: c.vk.DescriptorSetLayout = undefined;
     try check_vk(c.vk.CreateDescriptorSetLayout(opt.dev, &set_ci, opt.vk_alloc, &dsl));
 
-    const render_pass_texture_target = try createRenderPass(opt.dev, img_format);
-
     const pipeline_layout_ci = std.mem.zeroInit(c.vk.PipelineLayoutCreateInfo, .{
         .sType = c.vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
@@ -433,6 +430,8 @@ pub fn init(alloc: std.mem.Allocator, opt: InitOptions) !Self {
     try check_vk(c.vk.CreateSampler(opt.dev, &samplers_ci[0], opt.vk_alloc, &samplers[0]));
     try check_vk(c.vk.CreateSampler(opt.dev, &samplers_ci[1], opt.vk_alloc, &samplers[1]));
 
+    const render_target_pass = try createOffscreenRenderPass(opt.dev, img_format);
+
     var res: Self = .{
         .dev = opt.dev,
         .dpool = dpool,
@@ -442,9 +441,9 @@ pub fn init(alloc: std.mem.Allocator, opt: InitOptions) !Self {
         .dset_layout = dsl,
         .samplers = samplers,
         .textures = try alloc.alloc(Texture, opt.max_textures),
-        .texture_targets = try alloc.alloc(TextureTarget, opt.max_texture_targets),
         .destroy_textures = try alloc.alloc(u16, opt.max_textures),
-        .render_pass_texture_target = render_pass_texture_target,
+        .render_target_pass = render_target_pass,
+        .render_target_pipeline = try createPipeline(opt.dev, pipeline_layout, render_target_pass, opt.vk_alloc),
         .pipeline = pipeline,
         .pipeline_layout = pipeline_layout,
         .host_vis_mem_idx = host_vis_mem_type_index,
@@ -458,9 +457,9 @@ pub fn init(alloc: std.mem.Allocator, opt: InitOptions) !Self {
         .current_frame = &frames[0],
     };
     @memset(res.textures, Texture{});
-    @memset(res.texture_targets, TextureTarget{});
     res.dummy_texture = try res.createAndUploadTexture(&[4]u8{ 255, 255, 255, 255 }, 1, 1, .nearest);
     res.error_texture = try res.createAndUploadTexture(&opt.error_texture_color, 1, 1, .nearest);
+
     return res;
 }
 
@@ -536,23 +535,18 @@ pub fn endFrame(self: *Self) c.vk.CommandBuffer {
 // }
 
 //pub const begin = Override.begin;
-pub fn begin(self: *Self, win_size: dvui.Size.Natural) void {
+pub fn begin(self: *Self, framebuffer_size: dvui.Size.Physical) void {
     self.render_target = null;
     if (self.cmdbuf == null) @panic("dvui_vulkan_renderer: Command bufer not set before rendering started!");
-    // TODO: FIXME: get rid of this or do it more cleanly
-    //  WARNING: very risky as sdl_backend calls renderer, but have no other way to pass through arena
-    // self.base_backend.begin(arena); // call base
 
     const cmdbuf = self.cmdbuf;
     c.vk.CmdBindPipeline(cmdbuf, c.vk.PIPELINE_BIND_POINT_GRAPHICS, self.pipeline);
 
-    const extent: c.vk.Extent2D = .{ .width = @intFromFloat(win_size.w), .height = @intFromFloat(win_size.h) };
-    self.win_extent = extent;
     const viewport = c.vk.Viewport{
         .x = 0,
         .y = 0,
-        .width = win_size.w,
-        .height = win_size.h,
+        .width = framebuffer_size.w,
+        .height = framebuffer_size.h,
         .minDepth = 0,
         .maxDepth = 1,
     };
@@ -563,7 +557,7 @@ pub fn begin(self: *Self, win_size: dvui.Size.Natural) void {
         view_translate: @Vector(2, f32),
     };
     const push_constants = PushConstants{
-        .view_scale = .{ 2.0 / win_size.w, 2.0 / win_size.h },
+        .view_scale = .{ 2.0 / framebuffer_size.w, 2.0 / framebuffer_size.h },
         .view_translate = .{ -1.0, -1.0 },
     };
     c.vk.CmdPushConstants(
@@ -632,7 +626,7 @@ pub fn drawClippedTriangles(
             .extent = .{ .width = @intFromFloat(clip.w), .height = @intFromFloat(clip.h) },
         } else c.vk.Rect2D{
             .offset = .{ .x = 0, .y = 0 },
-            .extent = self.win_extent,
+            .extent = self.framebuffer_size,
         };
         c.vk.CmdSetScissor(cmdbuf, 0, 1, @ptrCast(&scissor));
     }
@@ -852,7 +846,7 @@ pub fn renderTarget(self: *Backend, texture: ?dvui.TextureTarget) GenericError!v
         };
         const render_pass_begin_info = std.mem.zeroInit(c.vk.RenderPassBeginInfo, .{
             .sType = c.vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-            .renderPass = self.render_pass_texture_target,
+            .renderPass = self.render_target_pass,
             .framebuffer = tt.framebuffer,
             .renderArea = .{
                 .offset = .{ .x = 0, .y = 0 },
@@ -928,7 +922,7 @@ fn createPipeline(
     render_pass: c.vk.RenderPass,
     vk_alloc: ?*c.vk.AllocationCallbacks,
 ) !c.vk.Pipeline {
-    //  NOTE: VK_KHR_maintenance5 (which was promoted to vulkan 1.4) deprecates ShaderModules.
+    // NOTE: VK_KHR_maintenance5 (which was promoted to vulkan 1.4) deprecates ShaderModules.
     // todo: check for extension and then enable
     const ext_m5 = false; // VK_KHR_maintenance5
 
@@ -937,10 +931,10 @@ fn createPipeline(
         .codeSize = vs_spv.len,
         .pCode = @as([*]const u32, @ptrCast(&vs_spv)),
     });
-    const shader_module: c.vk.ShaderModule = if (ext_m5) {
+    const vert_shader_module: c.vk.ShaderModule = if (!ext_m5) m: {
         var module: c.vk.ShaderModule = undefined;
         try check_vk(c.vk.CreateShaderModule(dev, &vert_shdd, vk_alloc, &module));
-        module;
+        break :m module;
     } else null;
 
     const frag_shdd = std.mem.zeroInit(c.vk.ShaderModuleCreateInfo, .{
@@ -948,19 +942,24 @@ fn createPipeline(
         .codeSize = fs_spv.len,
         .pCode = @as([*]const u32, @ptrCast(&fs_spv)),
     });
+    const frag_shader_module: c.vk.ShaderModule = if (!ext_m5) m: {
+        var module: c.vk.ShaderModule = undefined;
+        try check_vk(c.vk.CreateShaderModule(dev, &frag_shdd, vk_alloc, &module));
+        break :m module;
+    } else null;
 
     var pssci = [_]c.vk.PipelineShaderStageCreateInfo{
         std.mem.zeroInit(c.vk.PipelineShaderStageCreateInfo, .{
             .sType = c.vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = c.vk.SHADER_STAGE_VERTEX_BIT,
-            .module = shader_module,
+            .module = vert_shader_module,
             .pNext = if (ext_m5) &vert_shdd else null,
             .pName = "main",
         }),
         std.mem.zeroInit(c.vk.PipelineShaderStageCreateInfo, .{
             .sType = c.vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = c.vk.SHADER_STAGE_FRAGMENT_BIT,
-            //.module = frag,
+            .module = frag_shader_module,
             .pNext = if (ext_m5) &frag_shdd else null,
             .pName = "main",
         }),
@@ -1079,6 +1078,24 @@ fn createPipeline(
         .basePipelineHandle = null,
         .basePipelineIndex = -1,
     };
+
+    // std.log.debug(
+    //     \\dev = {any}
+    //     \\gpci = {any}
+    //     \\gpci.pStages = {any}
+    //     \\gpci.pVertexInputState = {any}
+    //     \\gpci.pInputAssemblyState = {any}
+    //     \\gpci.pViewportState = {any}
+    //     \\gpci.pRasterizationState = {any}
+    //     \\gpci.pMultisampleState = {any}
+    //     \\gpci.pColorBlendState = {any}
+    //     \\gpci.pDynamicState = {any}
+    // , .{
+    //     dev,                        gpci,                       gpci.pStages.*,
+    //     gpci.pVertexInputState.*,   gpci.pInputAssemblyState.*, gpci.pViewportState.*,
+    //     gpci.pRasterizationState.*, gpci.pMultisampleState.*,   gpci.pColorBlendState.*,
+    //     gpci.pDynamicState.*,
+    // });
 
     var pipeline: c.vk.Pipeline = undefined;
     try check_vk(c.vk.CreateGraphicsPipelines(
@@ -1407,9 +1424,9 @@ pub fn createAndUploadTexture(
     return tex;
 }
 
-pub fn createRenderPass(dev: c.vk.Device, format: c.vk.Format) !c.vk.RenderPass {
-    var color_attachments: [1]c.vk.AttachmentDescription = undefined;
+pub fn createOffscreenRenderPass(dev: c.vk.Device, format: c.vk.Format) !c.vk.RenderPass {
     var subpasses: [1]c.vk.SubpassDescription = undefined;
+    var color_attachments: [1]c.vk.AttachmentDescription = undefined;
 
     { // Render to framebuffer
         color_attachments[0] = std.mem.zeroInit(c.vk.AttachmentDescription, .{

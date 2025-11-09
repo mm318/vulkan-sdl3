@@ -78,20 +78,14 @@ pub fn preferredColorScheme(_: *SDLBackend) ?dvui.enums.ColorScheme {
 
 pub fn begin(self: *SDLBackend, arena: std.mem.Allocator) !void {
     self.arena = arena;
+    // hack: get proper physical size
     const win_size = self.windowSize();
-    self.renderer.begin(win_size);
+    self.renderer.begin(.{ .w = win_size.w, .h = win_size.h });
 }
 
 pub fn end(_: *SDLBackend) !void {}
 
 pub fn pixelSize(self: *SDLBackend) dvui.Size.Physical {
-    // var w: i32 = undefined;
-    // var h: i32 = undefined;
-    // toErr(
-    //     c.SDL.GetCurrentRenderOutputSize(self.renderer, &w, &h),
-    //     "SDL_GetCurrentRenderOutputSize in pixelSize",
-    // ) catch return self.last_pixel_size;
-
     const last_pixel_size = self.renderer.pixelSize();
     self.last_pixel_size = .{ .w = last_pixel_size.w, .h = last_pixel_size.h };
     return self.last_pixel_size;
