@@ -25,7 +25,11 @@ arena: std.mem.Allocator = undefined,
 pub fn init(alloc: std.mem.Allocator, window: *c.SDL.Window, options: DvuiVkRenderer.InitOptions) SDLBackend {
     // init on top of already initialized backend, overrides rendering
     const dvui_vk_backend = DvuiVkRenderer.init(alloc, options) catch @panic("unable to initialize DvuiVkRenderer");
-    return SDLBackend{ .window = window, .renderer = dvui_vk_backend };
+    var self = SDLBackend{ .window = window, .renderer = dvui_vk_backend };
+    self.renderer.framebuffer_size = self.windowSizeInPixels();
+    _ = self.pixelSize();
+    _ = self.windowSize();
+    return self;
 }
 
 const SDL_ERROR = bool;
@@ -78,9 +82,7 @@ pub fn preferredColorScheme(_: *SDLBackend) ?dvui.enums.ColorScheme {
 
 pub fn begin(self: *SDLBackend, arena: std.mem.Allocator) !void {
     self.arena = arena;
-    // hack: get proper physical size
-    const win_size = self.windowSize();
-    self.renderer.begin(.{ .w = win_size.w, .h = win_size.h });
+    self.renderer.begin(self.pixelSize());
 }
 
 pub fn end(_: *SDLBackend) !void {}
@@ -97,6 +99,13 @@ pub fn windowSize(self: *SDLBackend) dvui.Size.Natural {
     toErr(c.SDL.GetWindowSize(self.window, &w, &h), "SDL_GetWindowSize in windowSize") catch return self.last_window_size;
     self.last_window_size = .{ .w = @as(f32, @floatFromInt(w)), .h = @as(f32, @floatFromInt(h)) };
     return self.last_window_size;
+}
+
+pub fn windowSizeInPixels(self: *SDLBackend) c.vk.Extent2D {
+    var w: i32 = undefined;
+    var h: i32 = undefined;
+    toErr(c.SDL.GetWindowSizeInPixels(self.window, &w, &h), "SDL_GetWindowSizeInPixels in windowSizeInPixels") catch @panic("Unable to get window size");
+    return .{ .width = @intCast(w), .height = @intCast(h) };
 }
 
 pub fn contentScale(self: *SDLBackend) f32 {

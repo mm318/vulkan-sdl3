@@ -509,6 +509,7 @@ pub const SDL = struct {
     pub const CreateWindow = c.SDL_CreateWindow;
     pub const DestroyWindow = c.SDL_DestroyWindow;
     pub const GetWindowSize = c.SDL_GetWindowSize;
+    pub const GetWindowSizeInPixels = c.SDL_GetWindowSizeInPixels;
     pub const GetSystemTheme = c.SDL_GetSystemTheme;
     pub const SetWindowTitle = c.SDL_SetWindowTitle;
     pub const ShowWindow = c.SDL_ShowWindow;
