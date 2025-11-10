@@ -25,7 +25,7 @@ arena: std.mem.Allocator = undefined,
 pub fn init(alloc: std.mem.Allocator, window: *c.SDL.Window, options: DvuiVkRenderer.InitOptions) SDLBackend {
     // init on top of already initialized backend, overrides rendering
     const dvui_vk_backend = DvuiVkRenderer.init(alloc, options) catch @panic("unable to initialize DvuiVkRenderer");
-    var self = SDLBackend{ .window = window, .renderer = dvui_vk_backend };
+    var self = SDLBackend{ .window = window, .renderer = dvui_vk_backend, .arena = alloc };
     self.renderer.framebuffer_size = self.windowSizeInPixels();
     _ = self.pixelSize();
     _ = self.windowSize();
@@ -51,6 +51,7 @@ pub fn refresh(_: *SDLBackend) void {
 }
 
 pub fn deinit(self: *SDLBackend) void {
+    self.renderer.deinit(self.arena);
     self.* = undefined;
 }
 
@@ -81,7 +82,7 @@ pub fn preferredColorScheme(_: *SDLBackend) ?dvui.enums.ColorScheme {
 }
 
 pub fn begin(self: *SDLBackend, arena: std.mem.Allocator) !void {
-    self.arena = arena;
+    _ = arena;
     self.renderer.begin(self.pixelSize());
 }
 
@@ -150,8 +151,8 @@ pub fn textureReadTarget(self: *SDLBackend, texture: dvui.TextureTarget, pixels_
     return self.renderer.textureReadTarget(texture, pixels_out);
 }
 
-pub fn textureDestroy(_: *SDLBackend, texture: dvui.Texture) void {
-    c.SDL.DestroyTexture(@as(*c.SDL.Texture, @ptrCast(@alignCast(texture.ptr))));
+pub fn textureDestroy(self: *SDLBackend, texture: dvui.Texture) void {
+    self.renderer.textureDestroy(texture);
 }
 
 pub fn textureFromTarget(self: *SDLBackend, texture: dvui.TextureTarget) TextureError!dvui.Texture {

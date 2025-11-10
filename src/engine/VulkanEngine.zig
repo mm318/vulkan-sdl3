@@ -1862,7 +1862,7 @@ fn draw(self: *Self) void {
             win.begin(nstime) catch @panic("win.begin() failed");
 
             gui_frame() catch @panic("Failed to draw gui_frame()");
-            gui_stats(&backend.renderer) catch @panic("Failed to draw gui_stats()");
+            // gui_stats(&backend.renderer) catch @panic("Failed to draw gui_stats()");
 
             // const end_micros = try win.end(.{});
             _ = win.end(.{}) catch @panic("win.end() failed");

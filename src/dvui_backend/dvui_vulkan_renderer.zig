@@ -46,7 +46,7 @@ pub const TextureIdx = u16;
 
 // debug flags
 const enable_breakpoints = false;
-const texture_tracing = false; // tace leaks and usage
+const texture_tracing = false; // trace leaks and usage
 
 /// initialization options, caller still owns all passed in resources
 pub const InitOptions = struct {
@@ -190,8 +190,8 @@ const FrameData = struct {
 
     fn deinit(f: *@This(), b: *Backend) void {
         f.freeTextures(b);
-        b.dev.destroyBuffer(f.vtx_buff, b.vk_alloc);
-        b.dev.destroyBuffer(f.idx_buff, b.vk_alloc);
+        c.vk.DestroyBuffer(b.dev, f.vtx_buff, b.vk_alloc);
+        c.vk.DestroyBuffer(b.dev, f.idx_buff, b.vk_alloc);
     }
 
     fn reset(f: *@This(), b: *Backend) void {
@@ -203,6 +203,7 @@ const FrameData = struct {
 
     fn freeTextures(f: *@This(), b: *Backend) void {
         // free textures
+        // slog.debug("destroy_textures_offset {}, destroy_textures_len {}", .{ f.destroy_textures_offset, f.destroy_textures_len});
         for (f.destroy_textures_offset..(f.destroy_textures_offset + f.destroy_textures_len)) |i| {
             const tidx = b.destroy_textures[i % b.destroy_textures.len]; // wrap around on overflow
 
@@ -213,7 +214,7 @@ const FrameData = struct {
             b.stats.textures_alive -= 1;
             b.stats.textures_mem -= mreq.size;
 
-            //slog.debug("destroy texture {}({x}) | {}", .{ tidx, @intFromPtr(&b.textures[tidx]), b.stats.textures_alive });
+            // slog.debug("destroy texture {}({x}) | {}", .{ tidx, @intFromPtr(&b.textures[tidx]), b.stats.textures_alive });
             b.textures[tidx].deinit(b);
             b.textures[tidx].img = null;
             b.textures[tidx].dset = null;
@@ -457,6 +458,7 @@ pub fn init(alloc: std.mem.Allocator, opt: InitOptions) !Self {
         .current_frame = &frames[0],
     };
     @memset(res.textures, Texture{});
+    @memset(res.destroy_textures, 0xFFFF);
     res.dummy_texture = try res.createAndUploadTexture(&[4]u8{ 255, 255, 255, 255 }, 1, 1, .nearest);
     res.error_texture = try res.createAndUploadTexture(&opt.error_texture_color, 1, 1, .nearest);
 
@@ -465,11 +467,6 @@ pub fn init(alloc: std.mem.Allocator, opt: InitOptions) !Self {
 
 /// for sync safety, better call queueWaitIdle before destruction
 pub fn deinit(self: *Self, alloc: std.mem.Allocator) void {
-    for (self.texture_targets) |tt| if (!tt.isNull()) {
-        self.textureDestroy(.{ .ptr = &self.textures[tt.tex_idx], .width = 0, .height = 0 });
-        self.dev.destroyFramebuffer(tt.framebuffer, self.vk_alloc);
-    };
-    alloc.free(self.texture_targets);
     for (self.frames) |*f| f.deinit(self);
     alloc.free(self.frames);
     for (self.textures, 0..) |tex, i| if (!tex.isNull()) {
@@ -482,15 +479,15 @@ pub fn deinit(self: *Self, alloc: std.mem.Allocator) void {
 
     self.dummy_texture.deinit(self);
     self.error_texture.deinit(self);
-    for (self.samplers) |s| self.dev.destroySampler(s, self.vk_alloc);
+    for (self.samplers) |s| c.vk.DestroySampler(self.dev, s, self.vk_alloc);
 
-    self.dev.destroyDescriptorPool(self.dpool, self.vk_alloc);
-    self.dev.destroyDescriptorSetLayout(self.dset_layout, self.vk_alloc);
-    self.dev.destroyPipelineLayout(self.pipeline_layout, self.vk_alloc);
-    self.dev.destroyPipeline(self.pipeline, self.vk_alloc);
-    self.dev.unmapMemory(self.host_vis_mem);
-    self.dev.freeMemory(self.host_vis_mem, self.vk_alloc);
-    self.dev.destroyRenderPass(self.render_pass_texture_target, self.vk_alloc);
+    c.vk.DestroyDescriptorPool(self.dev, self.dpool, self.vk_alloc);
+    c.vk.DestroyDescriptorSetLayout(self.dev, self.dset_layout, self.vk_alloc);
+    c.vk.DestroyPipelineLayout(self.dev, self.pipeline_layout, self.vk_alloc);
+    c.vk.DestroyPipeline(self.dev, self.pipeline, self.vk_alloc);
+    c.vk.UnmapMemory(self.dev, self.host_vis_mem);
+    c.vk.FreeMemory(self.dev, self.host_vis_mem, self.vk_alloc);
+    // self.dev.destroyRenderPass(self.render_pass_texture_target, self.vk_alloc);
 }
 
 /// Begins new frame
@@ -794,7 +791,7 @@ pub fn textureDestroy(self: *Backend, texture: dvui.Texture) void {
     if (texture.ptr == invalid_texture) return;
     const dslot = self.destroy_textures_offset;
     self.destroy_textures_offset = (dslot + 1) % @as(u16, @intCast(self.destroy_textures.len));
-    if (self.destroy_textures[dslot] != 0xFFFF) {
+    if (self.destroy_textures[dslot] == 0xFFFF) {
         self.destroy_textures[dslot] = @intCast((@intFromPtr(texture.ptr) - @intFromPtr(self.textures.ptr)) / @sizeOf(Texture));
     }
     self.current_frame.destroy_textures_len += 1;
