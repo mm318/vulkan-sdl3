@@ -14,7 +14,7 @@ pub fn build(b: *std.Build) void {
         .backend = .custom,
     });
 
-    const sdl3_dep = dvui_dep.builder.dependency("sdl3", .{
+    const sdl3_dep = b.dependency("sdl3", .{
         .target = target,
         .optimize = optimize,
     });

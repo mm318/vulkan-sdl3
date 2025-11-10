@@ -20,9 +20,13 @@
     .minimum_zig_version = "0.15.1",
 
     .dependencies = .{
+        .sdl3 = .{
+            .url = "https://github.com/castholm/SDL/archive/refs/tags/v0.3.0+3.2.22.tar.gz",
+            .hash = "sdl-0.3.0+3.2.22-7uIn9Pg3fwGG2IyIOPxxOSVe-75nUng9clt7tXGFLzMr",
+        },
         .dvui = .{
-            .url = "https://github.com/mm318/dvui/archive/85005c9a2180c3640e3907961b1a623681d20db5.zip",
-            .hash = "dvui-0.4.0-dev-AQFJmVJX0QApkjwj8jfi3aOD1qzFaIVpyGuKlmJWt1tb",
+            .url = "https://github.com/mm318/dvui/archive/3d62a0a9bca24496a5d88e37ed0aa20bd69c94e4.zip",
+            .hash = "dvui-0.4.0-dev-AQFJmYez1gB9ful12tmJDbsm6TSkLKA-JUU5H1kFWtiS",
         },
         .zbench = .{
             .url = "https://github.com/hendriknielaender/zBench/archive/v0.11.1.tar.gz",

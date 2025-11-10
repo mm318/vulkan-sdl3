@@ -67,7 +67,7 @@ pub fn sleep(_: *SDLBackend, ns: u64) void {
     std.Thread.sleep(ns);
 }
 
-pub fn openURL(self: *SDLBackend, url: []const u8) !void {
+pub fn openURL(self: *SDLBackend, url: []const u8, _: bool) !void {
     const c_url = try self.arena.dupeZ(u8, url);
     defer self.arena.free(c_url);
     try toErr(c.SDL.OpenURL(c_url.ptr), "SDL_OpenURL in openURL");

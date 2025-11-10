@@ -1647,7 +1647,7 @@ fn gui_stats(vk_backend: *const DvuiBackend.DvuiVkRenderer) !void {
     prc = @as(f32, @floatFromInt(stats.indices)) / @as(f32, @floatFromInt(idx_max));
     dvui.progress(@src(), .{ .percent = prc }, .{
         .expand = .horizontal,
-        .color_accent = dvui.Color.fromHSLuv(@max(12, (1 - prc * prc) * 155), 99, 50, 100),
+        .color_fill = dvui.Color.fromHSLuv(@max(12, (1 - prc * prc) * 155), 99, 50, 100),
     });
 
     const verts_max = vk_backend.current_frame.vtx_data.len / @sizeOf(DvuiBackend.DvuiVkRenderer.Vertex);
@@ -1655,7 +1655,7 @@ fn gui_stats(vk_backend: *const DvuiBackend.DvuiVkRenderer) !void {
     prc = @as(f32, @floatFromInt(stats.verts)) / @as(f32, @floatFromInt(verts_max));
     dvui.progress(@src(), .{ .percent = prc }, .{
         .expand = .horizontal,
-        .color_accent = dvui.Color.fromHSLuv(@max(12, (1 - prc * prc) * 155), 99, 50, 100),
+        .color_fill = dvui.Color.fromHSLuv(@max(12, (1 - prc * prc) * 155), 99, 50, 100),
     });
 
     dvui.label(@src(), "Textures:", .{}, .{ .expand = .horizontal, .font_style = .caption_heading });
@@ -1677,7 +1677,7 @@ fn gui_stats(vk_backend: *const DvuiBackend.DvuiVkRenderer) !void {
     prc = @as(f32, @floatFromInt(prealloc_mem_frame_used)) / @as(f32, @floatFromInt(prealloc_mem_frame));
     dvui.progress(@src(), .{ .percent = prc }, .{
         .expand = .horizontal,
-        .color_accent = dvui.Color.fromHSLuv(@max(12, (1 - prc * prc) * 155), 99, 50, 100),
+        .color_fill = dvui.Color.fromHSLuv(@max(12, (1 - prc * prc) * 155), 99, 50, 100),
     });
 }
 
@@ -1862,7 +1862,7 @@ fn draw(self: *Self) void {
             win.begin(nstime) catch @panic("win.begin() failed");
 
             gui_frame() catch @panic("Failed to draw gui_frame()");
-            // gui_stats(&backend.renderer) catch @panic("Failed to draw gui_stats()");
+            gui_stats(&backend.renderer) catch @panic("Failed to draw gui_stats()");
 
             // const end_micros = try win.end(.{});
             _ = win.end(.{}) catch @panic("win.end() failed");
