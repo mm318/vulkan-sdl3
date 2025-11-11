@@ -1698,7 +1698,9 @@ pub fn run(self: *Self) void {
         while (c.SDL.PollEvent(&event) != false) {
             if (event.type == c.SDL.EVENT_QUIT) {
                 quit = true;
-                // } else if (c.cimgui.impl_sdl3.ProcessEvent(&event)) {
+            } else if (self.dvui_backend != null and self.dvui_window != null and
+                self.dvui_backend.?.addEvent(&self.dvui_window.?, event) catch false)
+            {
                 // Nothing to do here
             } else if (event.type == c.SDL.EVENT_KEY_DOWN) {
                 switch (event.key.scancode) {

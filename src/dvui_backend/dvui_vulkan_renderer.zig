@@ -19,30 +19,25 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const slog = std.log.scoped(.dvui_vulkan);
 const dvui = @import("dvui");
 const c = @import("vulkan").c;
 const check_vk = @import("vulkan").check_vk;
-const Size = dvui.Size;
-
-const vs_spv align(64) = @embedFile("dvui.vert.spv").*;
-const fs_spv align(64) = @embedFile("dvui.frag.spv").*;
 
 const Self = @This();
+const slog = std.log.scoped(.dvui_vulkan);
 
-//
-// Backend interface function overrides
-//  see: dvui/Backend.zig
-//
 const Backend = Self;
 const GenericError = dvui.Backend.GenericError;
 const TextureError = dvui.Backend.TextureError;
+const Size = dvui.Size;
 
 pub const Vertex = dvui.Vertex;
 pub const Indice = u16;
 pub const invalid_texture: *anyopaque = @ptrFromInt(0xBAD0BAD0); //@ptrFromInt(0xFFFF_FFFF);
 pub const img_format = c.vk.FORMAT_R8G8B8A8_UNORM; // format for textures
 pub const TextureIdx = u16;
+const vs_spv align(64) = @embedFile("dvui.vert.spv").*;
+const fs_spv align(64) = @embedFile("dvui.frag.spv").*;
 
 // debug flags
 const enable_breakpoints = false;
@@ -743,7 +738,7 @@ pub fn textureCreateTarget(
     var tex = self.createTextureWithMem(image_ci, interpolation) catch |err| {
         if (enable_breakpoints) @breakpoint();
         slog.err("textureCreateTarget failed to create framebuffer: {}", .{err});
-        return error.BackendError;
+        return GenericError.BackendError;
     };
     errdefer tex.deinit(self);
 
@@ -759,7 +754,7 @@ pub fn textureCreateTarget(
     check_vk(c.vk.CreateFramebuffer(dev, &framebuffer_ci, self.vk_alloc, &tex.framebuffer)) catch |err| {
         if (enable_breakpoints) @breakpoint();
         slog.err("textureCreateTarget failed to create framebuffer: {}", .{err});
-        return error.BackendError;
+        return GenericError.BackendError;
     };
     errdefer c.vk.destroyFramebuffer(tex.framebuffer, self.vk_alloc);
 
@@ -775,7 +770,7 @@ pub fn textureCreateTarget(
 pub fn textureRead(_: *Backend, texture: dvui.Texture, pixels_out: [*]u8, width: u32, height: u32) TextureError!void {
     // return try self.base_backend.textureRead(texture, pixels_out, width, height);
     slog.debug("textureRead({}, {*}, {}x{}) Not implemented!", .{ texture, pixels_out, width, height });
-    return error.NotImplemented;
+    return TextureError.NotImplemented;
 }
 
 pub fn textureDestroy(self: *Backend, texture: dvui.Texture) void {
@@ -795,7 +790,7 @@ pub fn textureReadTarget(self: *Backend, texture_target: dvui.TextureTarget, pix
     _ = pixels_out;
     _ = self;
     _ = texture_target;
-    return error.NotImplemented;
+    return TextureError.NotImplemented;
 }
 
 /// Convert texture target made with `textureCreateTarget` into return texture
