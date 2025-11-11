@@ -1385,6 +1385,8 @@ pub fn init_gui(self: *Self) void {
     // init dvui Window (maps onto a single OS window)
     self.dvui_window = dvui.Window.init(@src(), self.allocator, self.dvui_backend.?.backend(), .{}) catch @panic("Failed to create DVUI window");
     self.dvui_window.?.theme = dvui.Theme.builtin.adwaita_dark;
+
+    dvui.Examples.show_demo_window = true;
 }
 
 pub fn cleanup(self: *Self) void {

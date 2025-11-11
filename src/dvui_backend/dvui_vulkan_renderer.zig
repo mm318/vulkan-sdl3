@@ -723,62 +723,53 @@ pub fn textureCreateTarget(
     height: u32,
     interpolation: dvui.enums.TextureInterpolation,
 ) GenericError!dvui.TextureTarget {
-    const enable = false;
-    if (!enable) {
+    const tex_slot = self.findEmptyTextureSlot() orelse return error.OutOfMemory;
+
+    const dev = self.dev;
+
+    const image_ci = std.mem.zeroInit(c.vk.ImageCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = c.vk.IMAGE_TYPE_2D,
+        .format = img_format, // .b8g8r8_unorm
+        .extent = .{ .width = width, .height = height, .depth = 1 },
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = c.vk.SAMPLE_COUNT_1_BIT,
+        .tiling = c.vk.IMAGE_TILING_OPTIMAL,
+        .usage = c.vk.IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.vk.IMAGE_USAGE_SAMPLED_BIT,
+        .sharingMode = c.vk.SHARING_MODE_EXCLUSIVE,
+        .initialLayout = c.vk.IMAGE_LAYOUT_UNDEFINED,
+    });
+    var tex = self.createTextureWithMem(image_ci, interpolation) catch |err| {
+        if (enable_breakpoints) @breakpoint();
+        slog.err("textureCreateTarget failed to create framebuffer: {}", .{err});
         return error.BackendError;
-    } else {
-        const target_slot = blk: {
-            for (self.texture_targets, 0..) |*tt, s| {
-                if (tt.isNull()) break :blk s;
-            }
-            slog.err("textureCreateTarget: Out of texture target slots! Texture discarded.", .{});
-            return error.OutOfTextureTargets;
-        };
-        const tex_slot = self.findEmptyTextureSlot() orelse return error.OutOfTextures;
+    };
+    errdefer tex.deinit(self);
 
-        const dev = self.dev;
-        const tex = self.createTextureWithMem(.{
-            .image_type = .@"2d",
-            .format = img_format,
-            .extent = .{ .width = width, .height = height, .depth = 1 },
-            .mip_levels = 1,
-            .array_layers = 1,
-            .samples = .{ .@"1_bit" = true },
-            .tiling = .optimal,
-            .usage = .{
-                .color_attachment_bit = true,
-                .sampled_bit = true,
-            },
-            .sharing_mode = .exclusive,
-            .initial_layout = .undefined,
-        }, interpolation) catch |err| {
-            slog.err("textureCreateTarget failed to create framebuffer: {}", .{err});
-            return err;
-        };
-        errdefer tex.deinit(self);
+    const framebuffer_ci = std.mem.zeroInit(c.vk.FramebufferCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+        .renderPass = self.render_target_pass,
+        .attachmentCount = 1,
+        .pAttachments = &tex.img_view,
+        .width = width,
+        .height = height,
+        .layers = 1,
+    });
+    check_vk(c.vk.CreateFramebuffer(dev, &framebuffer_ci, self.vk_alloc, &tex.framebuffer)) catch |err| {
+        if (enable_breakpoints) @breakpoint();
+        slog.err("textureCreateTarget failed to create framebuffer: {}", .{err});
+        return error.BackendError;
+    };
+    errdefer c.vk.destroyFramebuffer(tex.framebuffer, self.vk_alloc);
 
-        const fb = dev.createFramebuffer(&.{
-            .flags = .{},
-            .render_pass = self.render_pass_texture_target,
-            .attachment_count = 1,
-            .p_attachments = @ptrCast(&tex.img_view),
-            .width = width,
-            .height = height,
-            .layers = 1,
-        }, self.vk_alloc) catch |err| {
-            slog.err("textureCreateTarget failed to create framebuffer: {}", .{err});
-            return err;
-        };
-        errdefer dev.destroyFramebuffer(fb, self.vk_alloc);
+    var mreq: c.vk.MemoryRequirements = undefined;
+    c.vk.GetImageMemoryRequirements(dev, tex.img, &mreq);
+    self.textures[tex_slot] = tex;
+    self.stats.textures_alive += 1;
+    self.stats.textures_mem += mreq.size;
 
-        self.textures[tex_slot] = tex;
-        self.texture_targets[target_slot] = TextureTarget{
-            .tex_idx = tex_slot,
-            .framebuffer = fb,
-            .fb_size = .{ .width = width, .height = height },
-        };
-        return &self.texture_targets[target_slot];
-    }
+    return .{ .ptr = &self.textures[tex_slot], .width = width, .height = height };
 }
 
 pub fn textureRead(_: *Backend, texture: dvui.Texture, pixels_out: [*]u8, width: u32, height: u32) TextureError!void {
@@ -799,25 +790,25 @@ pub fn textureDestroy(self: *Backend, texture: dvui.Texture) void {
 }
 
 /// Read pixel data (RGBA) from `texture` into `pixels_out`.
-pub fn textureReadTarget(self: *Backend, texture: dvui.TextureTarget, pixels_out: [*]u8) TextureError!void {
+pub fn textureReadTarget(self: *Backend, texture_target: dvui.TextureTarget, pixels_out: [*]u8) TextureError!void {
     // return self.base_backend.textureReadTarget(self, texture, pixels_out);
     _ = pixels_out;
     _ = self;
-    _ = texture;
+    _ = texture_target;
     return error.NotImplemented;
 }
 
 /// Convert texture target made with `textureCreateTarget` into return texture
 /// as if made by `textureCreate`.  After this call, texture target will not be
 /// used by dvui.
-pub fn textureFromTarget(self: *Backend, texture: dvui.TextureTarget) dvui.Texture {
+pub fn textureFromTarget(self: *Backend, texture_target: dvui.TextureTarget) dvui.Texture {
     _ = self;
-    return .{ .ptr = texture.ptr, .width = texture.width, .height = texture.height };
+    return .{ .ptr = texture_target.ptr, .width = texture_target.width, .height = texture_target.height };
 }
 
-pub fn renderTarget(self: *Backend, texture: ?dvui.TextureTarget) GenericError!void {
+pub fn renderTarget(self: *Backend, texture_target: ?dvui.TextureTarget) GenericError!void {
     // TODO: all errors are set to unreachable, add handling?
-    slog.debug("renderTarget({?})", .{texture});
+    slog.debug("renderTarget({?})", .{texture_target});
 
     if (self.render_target) |cmdbuf| { // finalize previous render target
         self.render_target = null;
@@ -825,29 +816,32 @@ pub fn renderTarget(self: *Backend, texture: ?dvui.TextureTarget) GenericError!v
         self.endSingleTimeCommands(cmdbuf) catch unreachable;
     }
 
-    const tt: *TextureTarget = if (texture) |t| @ptrCast(@alignCast(t.ptr)) else return;
+    const texture: *Texture = if (texture_target) |t| @ptrCast(@alignCast(t.ptr)) else return;
     const cmdbuf = self.beginSingleTimeCommands() catch unreachable;
-    self.render_target = cmdbuf;
 
+    const w: f32 = @floatFromInt(self.framebuffer_size.width); // @floatFromInt(tt.fb_size.width)
+    const h: f32 = @floatFromInt(self.framebuffer_size.height); // @floatFromInt(tt.fb_size.height)
     { // begin render-pass & reset viewport
+        c.vk.CmdBindPipeline(cmdbuf, c.vk.PIPELINE_BIND_POINT_GRAPHICS, self.render_target_pipeline);
+
         const clear = c.vk.ClearValue{
             .color = .{ .float32 = .{ 0, 0, 0, 0 } },
         };
         const viewport = c.vk.Viewport{
             .x = 0,
             .y = 0,
-            .width = @floatFromInt(tt.fb_size.width),
-            .height = @floatFromInt(tt.fb_size.height),
+            .width = w,
+            .height = h,
             .minDepth = 0,
             .maxDepth = 1,
         };
         const render_pass_begin_info = std.mem.zeroInit(c.vk.RenderPassBeginInfo, .{
             .sType = c.vk.STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
             .renderPass = self.render_target_pass,
-            .framebuffer = tt.framebuffer,
+            .framebuffer = texture.framebuffer,
             .renderArea = .{
                 .offset = .{ .x = 0, .y = 0 },
-                .extent = tt.fb_size,
+                .extent = .{ .width = texture_target.?.width, .height = texture_target.?.height },
             },
             .clearValueCount = 1,
             .pClearValues = &clear,
@@ -855,6 +849,25 @@ pub fn renderTarget(self: *Backend, texture: ?dvui.TextureTarget) GenericError!v
         c.vk.CmdBeginRenderPass(cmdbuf, &render_pass_begin_info, c.vk.SUBPASS_CONTENTS_INLINE);
         c.vk.CmdSetViewport(cmdbuf, 0, 1, @ptrCast(&viewport));
     }
+
+    const PushConstants = struct {
+        view_scale: @Vector(2, f32),
+        view_translate: @Vector(2, f32),
+    };
+    const push_constants = PushConstants{
+        .view_scale = .{ 2.0 / w, 2.0 / h },
+        .view_translate = .{ -1.0, -1.0 },
+    };
+    c.vk.CmdPushConstants(
+        cmdbuf,
+        self.pipeline_layout,
+        c.vk.SHADER_STAGE_VERTEX_BIT,
+        0,
+        @sizeOf(PushConstants),
+        &push_constants,
+    );
+
+    self.render_target = cmdbuf;
 }
 
 // pub fn clipboardText(self: *Backend) error{OutOfMemory}![]const u8 {
@@ -878,21 +891,13 @@ pub fn renderTarget(self: *Backend, texture: ?dvui.TextureTarget) GenericError!v
 // Some can be pub just to allow using them as utils
 //
 
-const TextureTarget = struct {
-    tex_idx: TextureIdx = 0,
-    fb_size: c.vk.Extent2D = .{ .width = 0, .height = 0 },
-    framebuffer: c.vk.Framebuffer = null,
-
-    fn isNull(self: @This()) bool {
-        return self.framebuffer == null;
-    }
-};
-
 const Texture = struct {
     img: c.vk.Image = null,
     img_view: c.vk.ImageView = null,
     mem: c.vk.DeviceMemory = null,
     dset: c.vk.DescriptorSet = null,
+    /// for render-textures only
+    framebuffer: c.vk.Framebuffer = null,
 
     trace: Trace = Trace.init,
     const Trace = std.debug.ConfigurableTrace(6, 5, texture_tracing);
@@ -910,6 +915,7 @@ const Texture = struct {
         c.vk.DestroyImageView(dev, tex.img_view, vk_alloc);
         c.vk.DestroyImage(dev, tex.img, vk_alloc);
         c.vk.FreeMemory(dev, tex.mem, vk_alloc);
+        c.vk.DestroyFramebuffer(dev, tex.framebuffer, vk_alloc);
     }
 };
 
