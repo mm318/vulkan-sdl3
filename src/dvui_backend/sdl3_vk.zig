@@ -218,27 +218,30 @@ pub fn addEvent(self: *SDLBackend, win: *dvui.Window, event: c.SDL.Event) !bool 
             return try win.addEventText(.{ .text = event.edit.text[0..strlen], .selected = true });
         },
         c.SDL.EVENT_MOUSE_MOTION => {
-            const touch = event.motion.which == c.SDL.TOUCH_MOUSEID;
-            if (self.log_events) {
-                var touch_str: []const u8 = " ";
-                if (touch) touch_str = " touch ";
-                log.debug("event{s}MOUSEMOTION {d} {d}\n", .{ touch_str, event.motion.x, event.motion.y });
-            }
-
             // sdl gives us mouse coords in "window coords" which is kind of
             // like natural coords but ignores content scaling
-            const scale = self.pixelSize().w / self.windowSize().w;
+            const pixel_size = self.pixelSize();
+            const window_size = self.windowSize();
+            const scale_x = pixel_size.w / window_size.w;
+            const scale_y = pixel_size.h / window_size.h;
+
+            if (self.log_events) {
+                const touch = event.motion.which == c.SDL.TOUCH_MOUSEID;
+                var touch_str: []const u8 = " ";
+                if (touch) touch_str = " touch ";
+                log.debug("event{s}MOUSEMOTION {d} {d} {} {}\n", .{ touch_str, event.motion.x, event.motion.y, scale_x, scale_y });
+            }
 
             return try win.addEventMouseMotion(.{
                 .pt = .{
-                    .x = event.motion.x * scale,
-                    .y = event.motion.y * scale,
+                    .x = event.motion.x * scale_x,
+                    .y = event.motion.y * scale_y,
                 },
             });
         },
         c.SDL.EVENT_MOUSE_BUTTON_DOWN => {
-            const touch = event.motion.which == c.SDL.TOUCH_MOUSEID;
             if (self.log_events) {
+                const touch = event.motion.which == c.SDL.TOUCH_MOUSEID;
                 var touch_str: []const u8 = " ";
                 if (touch) touch_str = " touch ";
                 log.debug("event{s}MOUSEBUTTONDOWN {d}\n", .{ touch_str, event.button.button });
@@ -247,8 +250,8 @@ pub fn addEvent(self: *SDLBackend, win: *dvui.Window, event: c.SDL.Event) !bool 
             return try win.addEventMouseButton(SDL_mouse_button_to_dvui(event.button.button), .press);
         },
         c.SDL.EVENT_MOUSE_BUTTON_UP => {
-            const touch = event.motion.which == c.SDL.TOUCH_MOUSEID;
             if (self.log_events) {
+                const touch = event.motion.which == c.SDL.TOUCH_MOUSEID;
                 var touch_str: []const u8 = " ";
                 if (touch) touch_str = " touch ";
                 log.debug("event{s}MOUSEBUTTONUP {d}\n", .{ touch_str, event.button.button });

@@ -331,7 +331,7 @@ fn init_device(self: *Self) void {
 fn init_swapchain(self: *Self) void {
     var win_width: c_int = undefined;
     var win_height: c_int = undefined;
-    check_sdl(c.SDL.GetWindowSize(self.sdl_window, &win_width, &win_height));
+    check_sdl(c.SDL.GetWindowSizeInPixels(self.sdl_window, &win_width, &win_height));
 
     // Create a swapchain
     const swapchain = vki.create_swapchain(self.allocator, .{
@@ -364,7 +364,7 @@ fn init_swapchain(self: *Self) void {
         VulkanDeleter.make(swapchain.handle, c.vk.DestroySwapchainKHR),
     ) catch @panic("Out of memory");
 
-    log.info("Created swapchain", .{});
+    log.info("Created swapchain, extent = {}", .{self.swapchain_extent});
 
     // Create depth image to associate with the swapchain
     const extent = c.vk.Extent3D{
@@ -1858,6 +1858,7 @@ fn draw(self: *Self) void {
 
     // gui
     if (self.dvui_backend) |*backend| {
+        // log.debug("swapchain_extent={} win_size_in_pixels={}", .{self.swapchain_extent, backend.windowSizeInPixels()});
         backend.renderer.beginFrame(cmd, self.swapchain_extent);
 
         if (self.dvui_window) |*win| {
@@ -1871,9 +1872,12 @@ fn draw(self: *Self) void {
             // const end_micros = try win.end(.{});
             _ = win.end(.{}) catch @panic("win.end() failed");
         }
+
+        _ = backend.renderer.endFrame();
+    } else {
+        c.vk.CmdEndRenderPass(cmd);
     }
 
-    c.vk.CmdEndRenderPass(cmd);
     check_vk(c.vk.EndCommandBuffer(cmd)) catch @panic("Failed to end command buffer");
 
     const wait_stage = @as(u32, @intCast(c.vk.PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT));

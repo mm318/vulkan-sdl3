@@ -216,6 +216,8 @@ const FrameData = struct {
             b.textures[tidx].img_view = null;
             b.textures[tidx].mem = null;
             b.textures[tidx].trace.addAddr(@returnAddress(), "destroy"); // keep tracing
+
+            b.destroy_textures[i % b.destroy_textures.len] = 0xFFFF;
         }
         f.destroy_textures_len = 0;
     }
@@ -385,7 +387,8 @@ pub fn init(alloc: std.mem.Allocator, opt: InitOptions) !Self {
     const pipeline = try createPipeline(opt.dev, pipeline_layout, opt.render_pass, opt.vk_alloc);
 
     const samplers_ci = [_]c.vk.SamplerCreateInfo{
-        .{ // dvui.TextureInterpolation.nearest
+        // dvui.TextureInterpolation.nearest
+        std.mem.zeroInit(c.vk.SamplerCreateInfo, .{
             .sType = c.vk.STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
             .magFilter = c.vk.FILTER_NEAREST,
             .minFilter = c.vk.FILTER_NEAREST,
@@ -402,8 +405,9 @@ pub fn init(alloc: std.mem.Allocator, opt: InitOptions) !Self {
             .maxLod = c.vk.LOD_CLAMP_NONE,
             .borderColor = c.vk.BORDER_COLOR_INT_OPAQUE_WHITE,
             .unnormalizedCoordinates = c.vk.FALSE,
-        },
-        .{ // dvui.TextureInterpolation.linear
+        }),
+        // dvui.TextureInterpolation.linear
+        std.mem.zeroInit(c.vk.SamplerCreateInfo, .{
             .sType = c.vk.STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
             .magFilter = c.vk.FILTER_LINEAR,
             .minFilter = c.vk.FILTER_LINEAR,
@@ -420,7 +424,7 @@ pub fn init(alloc: std.mem.Allocator, opt: InitOptions) !Self {
             .maxLod = c.vk.LOD_CLAMP_NONE,
             .borderColor = c.vk.BORDER_COLOR_INT_OPAQUE_WHITE,
             .unnormalizedCoordinates = c.vk.FALSE,
-        },
+        }),
     };
     var samplers: [2]c.vk.Sampler = undefined;
     try check_vk(c.vk.CreateSampler(opt.dev, &samplers_ci[0], opt.vk_alloc, &samplers[0]));
@@ -513,7 +517,7 @@ pub fn beginFrame(self: *Self, cmdbuf: c.vk.CommandBuffer, framebuffer_size: c.v
 /// returns command buffer (same one given at init)
 pub fn endFrame(self: *Self) c.vk.CommandBuffer {
     const cmdbuf = self.cmdbuf;
-    self.dev.cmdEndRenderPass(cmdbuf);
+    c.vk.CmdEndRenderPass(cmdbuf);
     self.cmdbuf = null;
     return cmdbuf;
 }
@@ -526,7 +530,25 @@ pub fn endFrame(self: *Self) c.vk.CommandBuffer {
 //     return self.base_backend.sleep(ns);
 // }
 
-//pub const begin = Override.begin;
+fn pushConstants(self: *Self, w: f32, h: f32, cmdbuf: c.vk.CommandBuffer) void {
+    const PushConstants = struct {
+        view_scale: @Vector(2, f32),
+        view_translate: @Vector(2, f32),
+    };
+    const push_constants = PushConstants{
+        .view_scale = .{ 2.0 / w, 2.0 / h },
+        .view_translate = .{ -1, -1 },
+    };
+    c.vk.CmdPushConstants(
+        cmdbuf,
+        self.pipeline_layout,
+        c.vk.SHADER_STAGE_VERTEX_BIT,
+        0,
+        @sizeOf(PushConstants),
+        &push_constants,
+    );
+}
+
 pub fn begin(self: *Self, framebuffer_size: dvui.Size.Physical) void {
     self.render_target = null;
     if (self.cmdbuf == null) @panic("dvui_vulkan_renderer: Command bufer not set before rendering started!");
@@ -544,22 +566,7 @@ pub fn begin(self: *Self, framebuffer_size: dvui.Size.Physical) void {
     };
     c.vk.CmdSetViewport(cmdbuf, 0, 1, @ptrCast(&viewport));
 
-    const PushConstants = struct {
-        view_scale: @Vector(2, f32),
-        view_translate: @Vector(2, f32),
-    };
-    const push_constants = PushConstants{
-        .view_scale = .{ 2.0 / framebuffer_size.w, 2.0 / framebuffer_size.h },
-        .view_translate = .{ -1.0, -1.0 },
-    };
-    c.vk.CmdPushConstants(
-        cmdbuf,
-        self.pipeline_layout,
-        c.vk.SHADER_STAGE_VERTEX_BIT,
-        0,
-        @sizeOf(PushConstants),
-        &push_constants,
-    );
+    self.pushConstants(framebuffer_size.w, framebuffer_size.h, cmdbuf);
 }
 
 pub fn end(_: *Backend) void {}
@@ -584,7 +591,14 @@ pub fn drawClippedTriangles(
     idx: []const Indice,
     clipr: ?dvui.Rect.Physical,
 ) void {
-    if (self.render_target != null) return; // TODO: render to textures
+    // slog.debug("draw_calls={} verts={} indices={}", .{self.stats.draw_calls, self.stats.verts, self.stats.indices});
+
+    // TODO: render to textures
+    if (self.render_target != null) {
+        // slog.debug("early exit out of drawClippedTriangles()", .{});
+        return;
+    }
+
     const texture: ?*anyopaque = if (texture_) |t| @as(*anyopaque, @ptrCast(@alignCast(t.ptr))) else null;
     const dev = self.dev;
     const cmdbuf = if (self.render_target) |t| t else self.cmdbuf;
@@ -620,6 +634,7 @@ pub fn drawClippedTriangles(
             .offset = .{ .x = 0, .y = 0 },
             .extent = self.framebuffer_size,
         };
+        // slog.debug("scissor: {any} (clipr: {})", .{scissor, clipr == null});
         c.vk.CmdSetScissor(cmdbuf, 0, 1, @ptrCast(&scissor));
     }
 
@@ -803,7 +818,7 @@ pub fn textureFromTarget(self: *Backend, texture_target: dvui.TextureTarget) dvu
 
 pub fn renderTarget(self: *Backend, texture_target: ?dvui.TextureTarget) GenericError!void {
     // TODO: all errors are set to unreachable, add handling?
-    slog.debug("renderTarget({?})", .{texture_target});
+    // slog.debug("renderTarget({?})", .{texture_target});
 
     if (self.render_target) |cmdbuf| { // finalize previous render target
         self.render_target = null;
@@ -845,22 +860,7 @@ pub fn renderTarget(self: *Backend, texture_target: ?dvui.TextureTarget) Generic
         c.vk.CmdSetViewport(cmdbuf, 0, 1, @ptrCast(&viewport));
     }
 
-    const PushConstants = struct {
-        view_scale: @Vector(2, f32),
-        view_translate: @Vector(2, f32),
-    };
-    const push_constants = PushConstants{
-        .view_scale = .{ 2.0 / w, 2.0 / h },
-        .view_translate = .{ -1.0, -1.0 },
-    };
-    c.vk.CmdPushConstants(
-        cmdbuf,
-        self.pipeline_layout,
-        c.vk.SHADER_STAGE_VERTEX_BIT,
-        0,
-        @sizeOf(PushConstants),
-        &push_constants,
-    );
+    self.pushConstants(w, h, cmdbuf);
 
     self.render_target = cmdbuf;
 }
@@ -966,13 +966,13 @@ fn createPipeline(
         c.vk.DestroyShaderModule(dev, p.module, vk_alloc);
     };
 
-    const pvisci = c.vk.PipelineVertexInputStateCreateInfo{
+    const pvisci = std.mem.zeroInit(c.vk.PipelineVertexInputStateCreateInfo, .{
         .sType = c.vk.STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
         .vertexBindingDescriptionCount = VertexBindings.binding_description.len,
         .pVertexBindingDescriptions = &VertexBindings.binding_description,
         .vertexAttributeDescriptionCount = VertexBindings.attribute_description.len,
         .pVertexAttributeDescriptions = &VertexBindings.attribute_description,
-    };
+    });
 
     const piasci = std.mem.zeroInit(c.vk.PipelineInputAssemblyStateCreateInfo, .{
         .sType = c.vk.STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
@@ -1013,6 +1013,15 @@ fn createPipeline(
         .alphaToOneEnable = c.vk.FALSE,
     });
 
+    const pdssci = std.mem.zeroInit(c.vk.PipelineDepthStencilStateCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+        .depthTestEnable = c.vk.FALSE,
+        .depthWriteEnable = c.vk.FALSE,
+        .depthCompareOp = c.vk.COMPARE_OP_ALWAYS,
+        .depthBoundsTestEnable = c.vk.FALSE,
+        .stencilTestEnable = c.vk.FALSE,
+    });
+
     // do premultiplied alpha blending:
     // const pma_blend = c.SDL_ComposeCustomBlendMode(
     //     c.SDL_BLENDFACTOR_ONE,
@@ -1035,7 +1044,6 @@ fn createPipeline(
             c.vk.COLOR_COMPONENT_B_BIT |
             c.vk.COLOR_COMPONENT_A_BIT,
     });
-
     const pcbsci = std.mem.zeroInit(c.vk.PipelineColorBlendStateCreateInfo, .{
         .sType = c.vk.STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
         .logicOpEnable = c.vk.FALSE,
@@ -1049,14 +1057,14 @@ fn createPipeline(
         c.vk.DYNAMIC_STATE_VIEWPORT,
         c.vk.DYNAMIC_STATE_SCISSOR,
     };
-    const pdsci = c.vk.PipelineDynamicStateCreateInfo{
+    const pdsci = std.mem.zeroInit(c.vk.PipelineDynamicStateCreateInfo, .{
         .sType = c.vk.STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
         .flags = 0,
         .dynamicStateCount = dynstate.len,
         .pDynamicStates = &dynstate,
-    };
+    });
 
-    const gpci = c.vk.GraphicsPipelineCreateInfo{
+    const gpci = std.mem.zeroInit(c.vk.GraphicsPipelineCreateInfo, .{
         .sType = c.vk.STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
         .flags = 0,
         .stageCount = pssci.len,
@@ -1067,7 +1075,7 @@ fn createPipeline(
         .pViewportState = &pvsci,
         .pRasterizationState = &prsci,
         .pMultisampleState = &pmsci,
-        .pDepthStencilState = null,
+        .pDepthStencilState = &pdssci,
         .pColorBlendState = &pcbsci,
         .pDynamicState = &pdsci,
         .layout = layout,
@@ -1075,7 +1083,7 @@ fn createPipeline(
         .subpass = 0,
         .basePipelineHandle = null,
         .basePipelineIndex = -1,
-    };
+    });
 
     // std.log.debug(
     //     \\dev = {any}
@@ -1237,13 +1245,13 @@ pub fn createTextureWithMem(
     errdefer c.vk.FreeMemory(dev, mem, self.vk_alloc);
     try check_vk(c.vk.BindImageMemory(dev, img, mem, 0));
 
-    const srr = c.vk.ImageSubresourceRange{
+    const srr = std.mem.zeroInit(c.vk.ImageSubresourceRange, .{
         .aspectMask = c.vk.IMAGE_ASPECT_COLOR_BIT,
         .baseMipLevel = 0,
         .levelCount = 1,
         .baseArrayLayer = 0,
         .layerCount = 1,
-    };
+    });
     const image_view_ci = std.mem.zeroInit(c.vk.ImageViewCreateInfo, .{
         .sType = c.vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .flags = 0,
@@ -1336,13 +1344,13 @@ pub fn createAndUploadTexture(
     defer c.vk.DestroyBuffer(dev, img_staging.buf, self.vk_alloc);
     defer c.vk.FreeMemory(dev, img_staging.mem, self.vk_alloc);
 
-    const srr = c.vk.ImageSubresourceRange{
+    const srr = std.mem.zeroInit(c.vk.ImageSubresourceRange, .{
         .aspectMask = c.vk.IMAGE_ASPECT_COLOR_BIT,
         .baseMipLevel = 0,
         .levelCount = 1,
         .baseArrayLayer = 0,
         .layerCount = 1,
-    };
+    });
     { // transition image to dst_optimal
         const img_barrier = std.mem.zeroInit(c.vk.ImageMemoryBarrier, .{
             .sType = c.vk.STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -1372,7 +1380,7 @@ pub fn createAndUploadTexture(
         cmdbuf = try self.beginSingleTimeCommands();
     }
     { // copy staging -> img
-        const buff_img_copy = c.vk.BufferImageCopy{
+        const buff_img_copy = std.mem.zeroInit(c.vk.BufferImageCopy, .{
             .bufferOffset = 0,
             .bufferRowLength = 0,
             .bufferImageHeight = 0,
@@ -1384,7 +1392,7 @@ pub fn createAndUploadTexture(
             },
             .imageOffset = .{ .x = 0, .y = 0, .z = 0 },
             .imageExtent = .{ .width = width, .height = height, .depth = 1 },
-        };
+        });
         c.vk.CmdCopyBufferToImage(cmdbuf, img_staging.buf, tex.img, c.vk.IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &buff_img_copy);
 
         try self.endSingleTimeCommands(cmdbuf);
