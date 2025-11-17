@@ -271,7 +271,7 @@ fn init_instance(self: *Self) void {
         .application_version = c.vk.MAKE_VERSION(0, 1, 0),
         .engine_name = "VkGuide",
         .engine_version = c.vk.MAKE_VERSION(0, 1, 0),
-        .api_version = c.vk.MAKE_VERSION(1, 1, 0),
+        .api_version = c.vk.MAKE_VERSION(1, 4, 0),
         .debug = true,
         .required_extensions = sdl_extension_slice,
     }) catch |err| {
@@ -290,7 +290,7 @@ fn init_device(self: *Self) void {
     };
 
     const physical_device = vki.select_physical_device(std.heap.page_allocator, self.instance, .{
-        .min_api_version = c.vk.MAKE_VERSION(1, 1, 0),
+        .min_api_version = c.vk.MAKE_VERSION(1, 4, 0),
         .required_extensions = required_device_extensions,
         .surface = self.surface,
         .criteria = .PreferDiscrete,

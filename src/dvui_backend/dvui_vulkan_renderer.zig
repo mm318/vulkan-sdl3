@@ -109,6 +109,11 @@ pub const InitOptions = struct {
 //     allocate_each: void,
 // };
 
+const PushConstants = extern struct {
+    view_scale: [2]f32,
+    view_translate: [2]f32,
+};
+
 /// just simple debug and informative metrics
 pub const Stats = struct {
     // per frame
@@ -378,7 +383,7 @@ pub fn init(alloc: std.mem.Allocator, opt: InitOptions) !Self {
             std.mem.zeroInit(c.vk.PushConstantRange, .{
                 .stageFlags = c.vk.SHADER_STAGE_VERTEX_BIT,
                 .offset = 0,
-                .size = @sizeOf(f32) * 4,
+                .size = @sizeOf(PushConstants),
             }),
         },
     });
@@ -531,10 +536,6 @@ pub fn endFrame(self: *Self) c.vk.CommandBuffer {
 // }
 
 fn pushConstants(self: *Self, w: f32, h: f32, cmdbuf: c.vk.CommandBuffer) void {
-    const PushConstants = struct {
-        view_scale: @Vector(2, f32),
-        view_translate: @Vector(2, f32),
-    };
     const push_constants = PushConstants{
         .view_scale = .{ 2.0 / w, 2.0 / h },
         .view_translate = .{ -1, -1 },
