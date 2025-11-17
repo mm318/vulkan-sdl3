@@ -489,9 +489,10 @@ pub fn deinit(self: *Self, alloc: std.mem.Allocator) void {
     c.vk.DestroyDescriptorSetLayout(self.dev, self.dset_layout, self.vk_alloc);
     c.vk.DestroyPipelineLayout(self.dev, self.pipeline_layout, self.vk_alloc);
     c.vk.DestroyPipeline(self.dev, self.pipeline, self.vk_alloc);
+    c.vk.DestroyPipeline(self.dev, self.render_target_pipeline, self.vk_alloc);
+    c.vk.DestroyRenderPass(self.dev, self.render_target_pass, self.vk_alloc);
     c.vk.UnmapMemory(self.dev, self.host_vis_mem);
     c.vk.FreeMemory(self.dev, self.host_vis_mem, self.vk_alloc);
-    // self.dev.destroyRenderPass(self.render_pass_texture_target, self.vk_alloc);
 }
 
 /// Begins new frame
@@ -1444,7 +1445,7 @@ pub fn createOffscreenRenderPass(dev: c.vk.Device, format: c.vk.Format) !c.vk.Re
             .stencilLoadOp = c.vk.ATTACHMENT_LOAD_OP_DONT_CARE,
             .stencilStoreOp = c.vk.ATTACHMENT_STORE_OP_DONT_CARE,
             .initialLayout = c.vk.IMAGE_LAYOUT_UNDEFINED,
-            .finalLayout = c.vk.IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            .finalLayout = c.vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
         });
         const color_attachment_ref = std.mem.zeroInit(c.vk.AttachmentReference, .{
             .attachment = 0,
