@@ -11,18 +11,8 @@ const height = 720;
 const texture_width = width / 10;
 const texture_height = height / 10;
 
-fn logSdlInfo(log: anytype) void {
-    log.debug("SDL build time version: {f}", .{sdl.buildTimeVersion()});
-    log.debug("SDL build time revision: {s}", .{sdl.c_main.SDL_REVISION});
-
-    log.debug("SDL runtime version: {f}", .{sdl.runTimeVersion()});
-    const revision: [*:0]const u8 = c.SDL_GetRevision();
-    log.debug("SDL runtime revision: {s}", .{revision});
-}
-
 pub fn appInit(gpa: std.mem.Allocator, _: [][*:0]u8) !*AppState {
     const log = std.log.scoped(.init);
-    logSdlInfo(log);
 
     try sdl.setHint("SDL_HINT_WINDOWS_DPI_SCALING", "1");
     try sdl.setHint(c.SDL_HINT_RENDER_VSYNC, "1");

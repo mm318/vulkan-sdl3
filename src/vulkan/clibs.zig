@@ -2,6 +2,7 @@ const c = @cImport({
     @cInclude("vulkan/vulkan.h");
     @cInclude("vk_mem_alloc.h");
     @cInclude("SDL3/SDL.h");
+    @cInclude("SDL3/SDL_revision.h");
     @cInclude("SDL3/SDL_vulkan.h");
 });
 
@@ -499,6 +500,16 @@ pub const vma = struct {
 // SDL types
 //
 pub const SDL = struct {
+    pub const GetVersion = c.SDL_GetVersion;
+    pub const MAJOR_VERSION = c.SDL_MAJOR_VERSION;
+    pub const MINOR_VERSION = c.SDL_MINOR_VERSION;
+    pub const MICRO_VERSION = c.SDL_MICRO_VERSION;
+    pub const VERSION_NUM_MAJOR = c.SDL_VERSIONNUM_MAJOR;
+    pub const VERSION_NUM_MINOR = c.SDL_VERSIONNUM_MINOR;
+    pub const VERSION_NUM_MICRO = c.SDL_VERSIONNUM_MICRO;
+    pub const GetRevision = c.SDL_GetRevision;
+    pub const REVISION = c.SDL_REVISION;
+
     pub const Window = c.SDL_Window;
     pub const Renderer = c.SDL_Renderer;
     pub const Texture = c.SDL_Texture;

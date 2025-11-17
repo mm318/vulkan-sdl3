@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const c = @import("vulkan").c;
+pub const c = @import("vulkan").c;
 
 const vki = @import("vulkan");
 const check_vk = vki.check_vk;
@@ -22,8 +22,6 @@ const Texture = texs.Texture;
 const log = std.log.scoped(.vulkan_engine);
 
 const Self = @This();
-
-const window_extent = c.vk.Extent2D{ .width = 1600, .height = 900 };
 
 const VK_NULL_HANDLE = null;
 
@@ -91,8 +89,6 @@ const FRAME_OVERLAP = 2;
 // Data
 //
 frame_number: i32 = 0,
-selected_shader: i32 = 0,
-selected_mesh: i32 = 0,
 
 sdl_window: *c.SDL.Window = undefined,
 
@@ -141,14 +137,6 @@ single_texture_set_layout: c.vk.DescriptorSetLayout = VK_NULL_HANDLE,
 descriptor_pool: c.vk.DescriptorPool = VK_NULL_HANDLE,
 
 vma_allocator: c.vma.Allocator = undefined,
-
-renderables: std.ArrayList(RenderObject),
-materials: std.StringHashMap(Material),
-meshes: std.StringHashMap(Mesh),
-textures: std.StringHashMap(Texture),
-
-camera_pos: Vec3 = Vec3.make(0.0, -3.0, -10.0),
-camera_input: Vec3 = Vec3.make(0.0, 0.0, 0.0),
 
 deletion_queue: std.ArrayList(VulkanDeleter) = undefined,
 buffer_deletion_queue: std.ArrayList(VmaBufferDeleter) = undefined,
@@ -210,13 +198,13 @@ pub const VmaImageDeleter = struct {
     }
 };
 
-pub fn init(a: std.mem.Allocator) Self {
+pub fn init(a: std.mem.Allocator, size: c.vk.Extent2D) Self {
     check_sdl(c.SDL.Init(c.SDL.INIT_VIDEO));
 
     const window = c.SDL.CreateWindow(
         "Vulkan",
-        window_extent.width,
-        window_extent.height,
+        @intCast(size.width),
+        @intCast(size.height),
         c.SDL.WINDOW_VULKAN | c.SDL.WINDOW_HIGH_PIXEL_DENSITY | c.SDL.WINDOW_RESIZABLE,
     ) orelse @panic("Failed to create SDL window");
 
@@ -228,10 +216,6 @@ pub fn init(a: std.mem.Allocator) Self {
         .deletion_queue = std.ArrayList(VulkanDeleter){},
         .buffer_deletion_queue = std.ArrayList(VmaBufferDeleter){},
         .image_deletion_queue = std.ArrayList(VmaImageDeleter){},
-        .renderables = std.ArrayList(RenderObject){},
-        .materials = std.StringHashMap(Material).init(a),
-        .meshes = std.StringHashMap(Mesh).init(a),
-        .textures = std.StringHashMap(Texture).init(a),
     };
 
     engine.init_instance();
@@ -837,8 +821,6 @@ fn init_pipelines(self: *Self) void {
         log.info("Created red triangle pipeline", .{});
     }
 
-    _ = self.create_material(red_triangle_pipeline, triangle_pipeline_layout, "red_triangle_mat");
-
     const rgb_vert_code align(4) = @embedFile("colored_triangle.vert").*;
     const rgb_frag_code align(4) = @embedFile("colored_triangle.frag").*;
     const rgb_vert_module = create_shader_module(self, &rgb_vert_code) orelse VK_NULL_HANDLE;
@@ -862,8 +844,6 @@ fn init_pipelines(self: *Self) void {
     } else {
         log.info("Created rgb triangle pipeline", .{});
     }
-
-    _ = self.create_material(rgb_triangle_pipeline, triangle_pipeline_layout, "rgb_triangle_mat");
 
     // Create pipeline for meshes
     const vertex_descritpion = mesh_mod.Vertex.vertex_input_description;
@@ -929,8 +909,6 @@ fn init_pipelines(self: *Self) void {
         log.info("Created mesh pipeline", .{});
     }
 
-    _ = self.create_material(mesh_pipeline, mesh_pipeline_layout, "default_mesh");
-
     // Textured mesh shader
     var textured_pipe_layout_ci = mesh_pipeline_layout_ci;
     const textured_set_layoyts = [_]c.vk.DescriptorSetLayout{
@@ -956,7 +934,6 @@ fn init_pipelines(self: *Self) void {
     pipeline_builder.pipeline_layout = textured_pipe_layout;
     const textured_mesh_pipeline = pipeline_builder.build(self.device, self.render_pass);
 
-    _ = self.create_material(textured_mesh_pipeline, textured_pipe_layout, "textured_mesh");
     self.deletion_queue.append(
         self.allocator,
         VulkanDeleter.make(textured_mesh_pipeline, c.vk.DestroyPipeline),
@@ -1242,113 +1219,7 @@ fn create_shader_module(self: *Self, code: []const u8) ?c.vk.ShaderModule {
     return shader_module;
 }
 
-fn init_scene(self: *Self) void {
-    const monkey = RenderObject{
-        .mesh = self.meshes.getPtr("monkey") orelse @panic("Failed to get monkey mesh"),
-        .material = self.materials.getPtr("default_mesh") orelse @panic("Failed to get default mesh material"),
-        .transform = Mat4.IDENTITY,
-    };
-    self.renderables.append(self.allocator, monkey) catch @panic("Out of memory");
-
-    // const diorama = RenderObject {
-    //     .mesh = self.meshes.getPtr("diorama") orelse @panic("Failed to get diorama mesh"),
-    //     .material = self.materials.getPtr("default_mesh") orelse @panic("Failed to get default mesh material"),
-    //     .transform = Mat4.mul(
-    //         Mat4.mul(
-    //             m3d.translation(m3d.vec3(3.0, 1, 0)),
-    //             m3d.rotation(m3d.vec3(0, 1, 0), std.math.degreesToRadians(f32, -60)),
-    //         ),
-    //         m3d.scale(m3d.vec3(2.0, 2.0, 2.0))
-    //     ),
-    // };
-    // self.renderables.append(diorama) catch @panic("Out of memory");
-    //
-    // const body = RenderObject {
-    //     .mesh = self.meshes.getPtr("body") orelse @panic("Failed to get body mesh"),
-    //     .material = self.materials.getPtr("default_mesh") orelse @panic("Failed to get default mesh material"),
-    //     .transform = Mat4.mul(
-    //         Mat4.mul(
-    //             m3d.translation(m3d.vec3(-3.0, -0.5, 0)),
-    //             m3d.rotation(m3d.vec3(0, 1, 0), std.math.degreesToRadians(f32, 45)),
-    //         ),
-    //         m3d.scale(m3d.vec3(2.0, 2.0, 2.0))
-    //     ),
-    // };
-    // self.renderables.append(body) catch @panic("Out of memory");
-
-    var material = self.materials.getPtr("textured_mesh") orelse @panic("Failed to get default mesh material");
-
-    // Allocate descriptor set for signle-texture to use on the material
-    const descriptor_set_alloc_info = std.mem.zeroInit(c.vk.DescriptorSetAllocateInfo, .{
-        .sType = c.vk.STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-        .descriptorPool = self.descriptor_pool,
-        .descriptorSetCount = 1,
-        .pSetLayouts = &self.single_texture_set_layout,
-    });
-
-    check_vk(c.vk.AllocateDescriptorSets(self.device, &descriptor_set_alloc_info, &material.texture_set)) catch @panic("Failed to allocate descriptor set");
-
-    // Sampler
-    const sampler_ci = std.mem.zeroInit(c.vk.SamplerCreateInfo, .{
-        .sType = c.vk.STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-        .magFilter = c.vk.FILTER_NEAREST,
-        .minFilter = c.vk.FILTER_NEAREST,
-        .addressModeU = c.vk.SAMPLER_ADDRESS_MODE_REPEAT,
-        .addressModeV = c.vk.SAMPLER_ADDRESS_MODE_REPEAT,
-        .addressModeW = c.vk.SAMPLER_ADDRESS_MODE_REPEAT,
-    });
-
-    var sampler: c.vk.Sampler = undefined;
-    check_vk(c.vk.CreateSampler(self.device, &sampler_ci, vk_alloc_cbs, &sampler)) catch @panic("Failed to create sampler");
-    self.deletion_queue.append(
-        self.allocator,
-        VulkanDeleter.make(sampler, c.vk.DestroySampler),
-    ) catch @panic("Out of memory");
-
-    const lost_empire_tex = (self.textures.get("empire_diffuse") orelse @panic("Failed to get empire texture"));
-
-    const descriptor_image_info = std.mem.zeroInit(c.vk.DescriptorImageInfo, .{
-        .sampler = sampler,
-        .imageView = lost_empire_tex.image_view,
-        .imageLayout = c.vk.IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-    });
-
-    const write_descriptor_set = std.mem.zeroInit(c.vk.WriteDescriptorSet, .{
-        .sType = c.vk.STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-        .dstSet = material.texture_set,
-        .dstBinding = 0,
-        .descriptorCount = 1,
-        .descriptorType = c.vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .pImageInfo = &descriptor_image_info,
-    });
-
-    c.vk.UpdateDescriptorSets(self.device, 1, &write_descriptor_set, 0, null);
-
-    const lost_empire = RenderObject{
-        .mesh = self.meshes.getPtr("lost_empire") orelse @panic("Failed to get triangle mesh"),
-        .transform = Mat4.translation(Vec3.make(5.0, -10.0, 0.0)),
-        .material = material,
-    };
-    self.renderables.append(self.allocator, lost_empire) catch @panic("Out of memory");
-
-    var x: i32 = -20;
-    while (x <= 20) : (x += 1) {
-        var y: i32 = -20;
-        while (y <= 20) : (y += 1) {
-            const translation = Mat4.translation(Vec3.make(@floatFromInt(x), 0.0, @floatFromInt(y)));
-            const scale = Mat4.scale(Vec3.make(0.2, 0.2, 0.2));
-            const transform = Mat4.mul(translation, scale);
-
-            const tri = RenderObject{
-                .mesh = self.meshes.getPtr("triangle") orelse @panic("Failed to get triangle mesh"),
-                .material = self.materials.getPtr("default_mesh") orelse @panic("Failed to get default mesh material"),
-                .transform = transform,
-            };
-
-            self.renderables.append(self.allocator, tri) catch @panic("Out of memory");
-        }
-    }
-}
+pub fn init_scene(_: *Self) void {}
 
 pub fn init_gui(self: *Self) void {
     // how many frames in flight we want
@@ -1392,17 +1263,6 @@ pub fn init_gui(self: *Self) void {
 pub fn cleanup(self: *Self) void {
     check_vk(c.vk.DeviceWaitIdle(self.device)) catch @panic("Failed to wait for device idle");
 
-    // TODO: this is a horrible way to keep track of the meshes to free. Quick and dirty hack.
-    var mesh_it = self.meshes.iterator();
-    while (mesh_it.next()) |entry| {
-        self.allocator.free(entry.value_ptr.vertices);
-    }
-
-    self.textures.deinit();
-    self.meshes.deinit();
-    self.materials.deinit();
-    self.renderables.deinit(self.allocator);
-
     if (self.dvui_window) |*dvui_window| {
         dvui_window.deinit();
     }
@@ -1444,168 +1304,6 @@ pub fn cleanup(self: *Self) void {
     c.vk.DestroyInstance(self.instance, vk_alloc_cbs);
     c.SDL.DestroyWindow(self.sdl_window);
     c.SDL.Quit();
-}
-
-fn load_textures(self: *Self) void {
-    const lost_empire_image = texs.load_image_from_file(self, "assets/lost_empire-RGBA.png") catch @panic("Failed to load image");
-    self.image_deletion_queue.append(
-        self.allocator,
-        VmaImageDeleter{ .image = lost_empire_image },
-    ) catch @panic("Out of memory");
-    const image_view_ci = std.mem.zeroInit(c.vk.ImageViewCreateInfo, .{
-        .sType = c.vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .viewType = c.vk.IMAGE_VIEW_TYPE_2D,
-        .image = lost_empire_image.image,
-        .format = c.vk.FORMAT_R8G8B8A8_SRGB,
-        .components = .{
-            .r = c.vk.COMPONENT_SWIZZLE_IDENTITY,
-            .g = c.vk.COMPONENT_SWIZZLE_IDENTITY,
-            .b = c.vk.COMPONENT_SWIZZLE_IDENTITY,
-            .a = c.vk.COMPONENT_SWIZZLE_IDENTITY,
-        },
-        .subresourceRange = .{
-            .aspectMask = c.vk.IMAGE_ASPECT_COLOR_BIT,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1,
-        },
-    });
-
-    var lost_empire = Texture{
-        .image = lost_empire_image,
-        .image_view = null,
-    };
-
-    check_vk(c.vk.CreateImageView(self.device, &image_view_ci, vk_alloc_cbs, &lost_empire.image_view)) catch @panic("Failed to create image view");
-    self.deletion_queue.append(
-        self.allocator,
-        VulkanDeleter.make(lost_empire.image_view, c.vk.DestroyImageView),
-    ) catch @panic("Out of memory");
-
-    self.textures.put("empire_diffuse", lost_empire) catch @panic("Out of memory");
-}
-
-fn load_meshes(self: *Self) void {
-    const vertices = [_]mesh_mod.Vertex{ .{
-        .position = Vec3.make(1.0, 1.0, 0.0),
-        .normal = undefined,
-        .color = Vec3.make(0.0, 1.0, 0.0),
-        .uv = Vec2.make(1.0, 1.0),
-    }, .{
-        .position = Vec3.make(-1.0, 1.0, 0.0),
-        .normal = undefined,
-        .color = Vec3.make(0.0, 1.0, 0.0),
-        .uv = Vec2.make(0.0, 1.0),
-    }, .{
-        .position = Vec3.make(0.0, -1.0, 0.0),
-        .normal = undefined,
-        .color = Vec3.make(0.0, 1.0, 0.0),
-        .uv = Vec2.make(0.5, 0.0),
-    } };
-
-    var triangle_mesh = Mesh{
-        .vertices = self.allocator.dupe(mesh_mod.Vertex, vertices[0..]) catch @panic("Out of memory"),
-    };
-    self.upload_mesh(&triangle_mesh);
-    self.meshes.put("triangle", triangle_mesh) catch @panic("Out of memory");
-
-    var monkey_mesh = mesh_mod.load_from_obj(self.allocator, "assets/suzanne.obj");
-    self.upload_mesh(&monkey_mesh);
-    self.meshes.put("monkey", monkey_mesh) catch @panic("Out of memory");
-
-    //var cube_diorama = mesh_mod.load_from_obj(self.allocator, "assets/cube_diorama.obj");
-    //self.upload_mesh(&cube_diorama);
-    //self.meshes.put("diorama", cube_diorama) catch @panic("Out of memory");
-
-    //var body = mesh_mod.load_from_obj(self.allocator, "assets/body_male_realistic.obj");
-    //self.upload_mesh(&body);
-    //self.meshes.put("body", body) catch @panic("Out of memory");
-
-    var lost_empire = mesh_mod.load_from_obj(self.allocator, "assets/lost_empire.obj");
-    self.upload_mesh(&lost_empire);
-    self.meshes.put("lost_empire", lost_empire) catch @panic("Out of memory");
-}
-
-fn upload_mesh(self: *Self, mesh: *Mesh) void {
-    // Create a cpu buffer for staging
-    const staging_buffer_ci = std.mem.zeroInit(c.vk.BufferCreateInfo, .{
-        .sType = c.vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = mesh.vertices.len * @sizeOf(mesh_mod.Vertex),
-        .usage = c.vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
-    });
-
-    const staging_buffer_ai = std.mem.zeroInit(c.vma.AllocationCreateInfo, .{
-        .usage = c.vma.MEMORY_USAGE_CPU_ONLY,
-    });
-
-    var staging_buffer: AllocatedBuffer = undefined;
-    check_vk(c.vma.CreateBuffer(
-        self.vma_allocator,
-        &staging_buffer_ci,
-        &staging_buffer_ai,
-        &staging_buffer.buffer,
-        &staging_buffer.allocation,
-        null,
-    )) catch @panic("Failed to create vertex buffer");
-
-    log.info("Created staging buffer {}", .{@intFromPtr(mesh.vertex_buffer.buffer)});
-
-    var data: ?*anyopaque = undefined;
-    check_vk(c.vma.MapMemory(self.vma_allocator, staging_buffer.allocation, &data)) catch @panic("Failed to map vertex buffer");
-    const aligned_data: [*]mesh_mod.Vertex = @ptrCast(@alignCast(data));
-    @memcpy(aligned_data, mesh.vertices);
-    c.vma.UnmapMemory(self.vma_allocator, staging_buffer.allocation);
-
-    log.info("Copied mesh data into staging buffer", .{});
-
-    const gpu_buffer_ci = std.mem.zeroInit(c.vk.BufferCreateInfo, .{
-        .sType = c.vk.STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = mesh.vertices.len * @sizeOf(mesh_mod.Vertex),
-        .usage = c.vk.BUFFER_USAGE_VERTEX_BUFFER_BIT | c.vk.BUFFER_USAGE_TRANSFER_DST_BIT,
-    });
-
-    const gpu_buffer_ai = std.mem.zeroInit(c.vma.AllocationCreateInfo, .{
-        .usage = c.vma.MEMORY_USAGE_GPU_ONLY,
-    });
-
-    check_vk(c.vma.CreateBuffer(
-        self.vma_allocator,
-        &gpu_buffer_ci,
-        &gpu_buffer_ai,
-        &mesh.vertex_buffer.buffer,
-        &mesh.vertex_buffer.allocation,
-        null,
-    )) catch @panic("Failed to create vertex buffer");
-
-    log.info("Created GPU buffer for mesh", .{});
-
-    self.buffer_deletion_queue.append(
-        self.allocator,
-        VmaBufferDeleter{ .buffer = mesh.vertex_buffer },
-    ) catch @panic("Out of memory");
-
-    // Now we can copy immediate the content of the staging buffer to the gpu
-    // only memory.
-    self.immediate_submit(struct {
-        mesh_buffer: c.vk.Buffer,
-        staging_buffer: c.vk.Buffer,
-        size: usize,
-
-        fn submit(ctx: @This(), cmd: c.vk.CommandBuffer) void {
-            const copy_region = std.mem.zeroInit(c.vk.BufferCopy, .{
-                .size = ctx.size,
-            });
-            c.vk.CmdCopyBuffer(cmd, ctx.staging_buffer, ctx.mesh_buffer, 1, &copy_region);
-        }
-    }{
-        .mesh_buffer = mesh.vertex_buffer.buffer,
-        .staging_buffer = staging_buffer.buffer,
-        .size = mesh.vertices.len * @sizeOf(mesh_mod.Vertex),
-    });
-
-    // We can free the staging buffer at this point.
-    c.vma.DestroyBuffer(self.vma_allocator, staging_buffer.buffer, staging_buffer.allocation);
 }
 
 // both dvui and SDL drawing
@@ -1703,65 +1401,8 @@ pub fn run(self: *Self) void {
             {
                 // Nothing to do here
             } else if (event.type == c.SDL.EVENT_KEY_DOWN) {
-                switch (event.key.scancode) {
-                    c.SDL.SCANCODE_SPACE => {
-                        self.selected_shader = if (self.selected_shader == 1) 0 else 1;
-                    },
-                    c.SDL.SCANCODE_M => {
-                        self.selected_mesh = if (self.selected_mesh == 1) 0 else 1;
-                    },
-
-                    // WASD for camera
-                    c.SDL.SCANCODE_W => {
-                        self.camera_input.z = 1.0;
-                    },
-                    c.SDL.SCANCODE_S => {
-                        self.camera_input.z = -1.0;
-                    },
-                    c.SDL.SCANCODE_A => {
-                        self.camera_input.x = 1.0;
-                    },
-                    c.SDL.SCANCODE_D => {
-                        self.camera_input.x = -1.0;
-                    },
-                    c.SDL.SCANCODE_E => {
-                        self.camera_input.y = 1.0;
-                    },
-                    c.SDL.SCANCODE_Q => {
-                        self.camera_input.y = -1.0;
-                    },
-
-                    else => {},
-                }
-            } else if (event.type == c.SDL.EVENT_KEY_UP) {
-                switch (event.key.scancode) {
-                    c.SDL.SCANCODE_W => {
-                        self.camera_input.z = 0.0;
-                    },
-                    c.SDL.SCANCODE_S => {
-                        self.camera_input.z = 0.0;
-                    },
-                    c.SDL.SCANCODE_A => {
-                        self.camera_input.x = 0.0;
-                    },
-                    c.SDL.SCANCODE_D => {
-                        self.camera_input.x = 0.0;
-                    },
-                    c.SDL.SCANCODE_E => {
-                        self.camera_input.y = 0.0;
-                    },
-                    c.SDL.SCANCODE_Q => {
-                        self.camera_input.y = 0.0;
-                    },
-
-                    else => {},
-                }
+                log.debug("unhandled keyboard press", .{});
             }
-        }
-
-        if (self.camera_input.squared_norm() > (0.1 * 0.1)) {
-            const camera_delta = self.camera_input.normalized().mul(delta * 5.0);
-            self.camera_pos = Vec3.add(self.camera_pos, camera_delta);
         }
 
         self.draw();
@@ -1854,7 +1495,7 @@ fn draw(self: *Self) void {
     c.vk.CmdBeginRenderPass(cmd, &render_pass_begin_info, c.vk.SUBPASS_CONTENTS_INLINE);
 
     // Objects
-    self.draw_objects(cmd, self.renderables.items);
+    self.draw_objects(cmd, &.{});
 
     // gui
     if (self.dvui_backend) |*backend| {
@@ -1905,18 +1546,10 @@ fn draw(self: *Self) void {
 }
 
 fn draw_objects(self: *Self, cmd: c.vk.CommandBuffer, objects: []RenderObject) void {
-    const view = Mat4.translation(self.camera_pos);
     const aspect = @as(f32, @floatFromInt(self.swapchain_extent.width)) / @as(f32, @floatFromInt(self.swapchain_extent.height));
+
     var proj = Mat4.perspective(std.math.degreesToRadians(70.0), aspect, 0.1, 200.0);
-
     proj.j.y *= -1.0;
-
-    // Create and bind the camera buffer
-    const curr_camera_data = GPUCameraData{
-        .view = view,
-        .proj = proj,
-        .view_proj = proj.mul(view),
-    };
 
     const frame_index: usize = @intCast(@mod(self.frame_number, FRAME_OVERLAP));
 
@@ -1933,9 +1566,7 @@ fn draw_objects(self: *Self, cmd: c.vk.CommandBuffer, objects: []RenderObject) v
     var data: ?*anyopaque = undefined;
     check_vk(c.vma.MapMemory(self.vma_allocator, self.camera_and_scene_buffer.allocation, &data)) catch @panic("Failed to map camera buffer");
 
-    const camera_data: *GPUCameraData = @ptrFromInt(@intFromPtr(data) + camera_data_offset);
     const scene_data: *GPUSceneData = @ptrFromInt(@intFromPtr(data) + scene_data_offset);
-    camera_data.* = curr_camera_data;
     const framed = @as(f32, @floatFromInt(self.frame_number)) / 120.0;
     scene_data.ambient_color = Vec3.make(@sin(framed), 0.0, @cos(framed)).to_point4();
 
@@ -2025,22 +1656,6 @@ fn draw_objects(self: *Self, cmd: c.vk.CommandBuffer, objects: []RenderObject) v
 
         c.vk.CmdDraw(cmd, @as(u32, @intCast(object.mesh.vertices.len)), 1, 0, @intCast(index));
     }
-}
-
-fn create_material(self: *Self, pipeline: c.vk.Pipeline, pipeline_layout: c.vk.PipelineLayout, name: []const u8) *Material {
-    self.materials.put(name, Material{
-        .pipeline = pipeline,
-        .pipeline_layout = pipeline_layout,
-    }) catch @panic("Out of memory");
-    return self.materials.getPtr(name) orelse unreachable;
-}
-
-fn get_material(self: *Self, name: []const u8) ?*Material {
-    return self.material.getPtr(name);
-}
-
-fn get_mesh(self: *Self, name: []const u8) ?*Mesh {
-    return self.meshes.getPtr(name);
 }
 
 pub fn create_buffer(self: *Self, alloc_size: usize, usage: c.vk.BufferUsageFlags, memory_usage: c.vma.MemoryUsage) AllocatedBuffer {

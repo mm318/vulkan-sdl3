@@ -1,17 +1,51 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const AppState = @import("AppState.zig");
+const Game = @import("Game.zig");
 const VulkanEngine = @import("vulkan_engine");
 
 var debug_allocator = std.heap.DebugAllocator(.{}).init;
-var gpa: ?std.mem.Allocator = null;
 
 pub const std_options = std.Options{
     .log_level = if (builtin.mode != .Debug) .info else .debug,
 };
 
+const mlog = std.log.scoped(.main);
+
+const width = 1280;
+const height = 720;
+const texture_width = width / 10;
+const texture_height = height / 10;
+
+fn buildTimeVersion() std.SemanticVersion {
+    return std.SemanticVersion{
+        .major = VulkanEngine.c.SDL.MAJOR_VERSION,
+        .minor = VulkanEngine.c.SDL.MINOR_VERSION,
+        .patch = VulkanEngine.c.SDL.MICRO_VERSION,
+    };
+}
+
+fn runTimeVersion() std.SemanticVersion {
+    const version = VulkanEngine.c.SDL.GetVersion();
+    return std.SemanticVersion{
+        .major = @intCast(VulkanEngine.c.SDL.VERSION_NUM_MAJOR(version)),
+        .minor = @intCast(VulkanEngine.c.SDL.VERSION_NUM_MINOR(version)),
+        .patch = @intCast(VulkanEngine.c.SDL.VERSION_NUM_MICRO(version)),
+    };
+}
+
+fn logSdlInfo(log: anytype) void {
+    log.debug("SDL build time version: {f}", .{buildTimeVersion()});
+    log.debug("SDL build time revision: {s}", .{VulkanEngine.c.SDL.REVISION});
+
+    log.debug("SDL runtime version: {f}", .{runTimeVersion()});
+    const revision: [*:0]const u8 = VulkanEngine.c.SDL.GetRevision();
+    log.debug("SDL runtime revision: {s}", .{revision});
+}
+
 pub fn main() !void {
-    gpa, const is_debug = gpa: {
+    const gpa, const is_debug = gpa: {
         break :gpa switch (builtin.mode) {
             .Debug, .ReleaseSafe => .{ debug_allocator.allocator(), true },
             .ReleaseFast, .ReleaseSmall => .{ std.heap.smp_allocator, false },
@@ -27,13 +61,25 @@ pub fn main() !void {
     const cwd = std.process.getCwd(&cwd_buff) catch @panic("cwd_buff too small");
     std.log.info("Running from: {s}", .{cwd});
 
-    var engine = VulkanEngine.init(gpa.?);
+    const state = try gpa.create(AppState);
+    state.* = .{
+        .gpa = gpa,
+        .arena = std.heap.ArenaAllocator.init(gpa),
+        .game = try Game.init(gpa, texture_width, texture_height),
+        .ui = .{},
+    };
+    defer state.deinit();
+
+    state.game.fill(state.seed, state.percent);
+    state.game.live(); // remove random noise
+
+    logSdlInfo(mlog);
+
+    var engine = VulkanEngine.init(gpa, .{ .width = width, .height = height });
     defer engine.cleanup();
 
-    // engine.load_textures();
-    // engine.load_meshes();
-    // engine.init_scene();
-    engine.init_gui();
+    engine.init_scene(); // TODO: plug whatever is needed for appIterate() here
+    engine.init_gui(); // TODO: plug handleUi() here
 
-    engine.run();
+    engine.run(); // TODO: plug appIterate() here
 }
