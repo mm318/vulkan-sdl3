@@ -203,7 +203,6 @@ const FrameData = struct {
 
     fn freeTextures(f: *@This(), b: *Backend) void {
         // free textures
-        // slog.debug("destroy_textures_offset {}, destroy_textures_len {}", .{ f.destroy_textures_offset, f.destroy_textures_len});
         for (f.destroy_textures_offset..(f.destroy_textures_offset + f.destroy_textures_len)) |i| {
             const tidx = b.destroy_textures[i % b.destroy_textures.len]; // wrap around on overflow
 
@@ -214,7 +213,6 @@ const FrameData = struct {
             b.stats.textures_alive -= 1;
             b.stats.textures_mem -= mreq.size;
 
-            // slog.debug("destroy texture {}({x}) | {}", .{ tidx, @intFromPtr(&b.textures[tidx]), b.stats.textures_alive });
             b.textures[tidx].deinit(b);
             b.textures[tidx].img = null;
             b.textures[tidx].dset = null;
@@ -595,12 +593,6 @@ pub fn drawClippedTriangles(
 ) void {
     // slog.debug("draw_calls={} verts={} indices={}", .{self.stats.draw_calls, self.stats.verts, self.stats.indices});
 
-    // TODO: render to textures
-    if (self.render_target != null) {
-        // slog.debug("early exit out of drawClippedTriangles()", .{});
-        return;
-    }
-
     const texture: ?*anyopaque = if (texture_) |t| @as(*anyopaque, @ptrCast(@alignCast(t.ptr))) else null;
     const dev = self.dev;
     const cmdbuf = if (self.render_target) |t| t else self.cmdbuf;
@@ -798,7 +790,6 @@ pub fn textureDestroy(self: *Backend, texture: dvui.Texture) void {
         self.destroy_textures[dslot] = @intCast((@intFromPtr(texture.ptr) - @intFromPtr(self.textures.ptr)) / @sizeOf(Texture));
     }
     self.current_frame.destroy_textures_len += 1;
-    // slog.debug("schedule destroy texture: {} ({x})", .{ self.destroy_textures[dslot], @intFromPtr(texture) });
 }
 
 /// Read pixel data (RGBA) from `texture` into `pixels_out`.
