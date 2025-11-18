@@ -535,6 +535,7 @@ pub const SDL = struct {
     pub const SetRenderClipRect = c.SDL_SetRenderClipRect;
 
     pub const Init = c.SDL_Init;
+    pub const GetTicks = c.SDL_GetTicks;
     pub const PushEvent = c.SDL_PushEvent;
     pub const PollEvent = c.SDL_PollEvent;
     pub const Quit = c.SDL_Quit;

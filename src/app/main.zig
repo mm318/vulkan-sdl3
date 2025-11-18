@@ -13,10 +13,8 @@ pub const std_options = std.Options{
 
 const mlog = std.log.scoped(.main);
 
-const width = 1280;
-const height = 720;
-const texture_width = width / 10;
-const texture_height = height / 10;
+const texture_width = AppState.width / 10;
+const texture_height = AppState.height / 10;
 
 fn buildTimeVersion() std.SemanticVersion {
     return std.SemanticVersion{
@@ -66,6 +64,7 @@ pub fn main() !void {
         .gpa = gpa,
         .arena = std.heap.ArenaAllocator.init(gpa),
         .game = try Game.init(gpa, texture_width, texture_height),
+        .seed = @bitCast(std.time.milliTimestamp()),
         .ui = .{},
     };
     defer state.deinit();
@@ -75,11 +74,19 @@ pub fn main() !void {
 
     logSdlInfo(mlog);
 
-    var engine = VulkanEngine.init(gpa, .{ .width = width, .height = height });
+    var engine = VulkanEngine.init(
+        gpa,
+        .{ .width = AppState.width, .height = AppState.height },
+        AppState,
+        state,
+        AppState.iterate,
+        AppState.drawGame,
+        AppState.handleUi,
+    );
     defer engine.cleanup();
 
     engine.init_scene(); // TODO: plug whatever is needed for appIterate() here
     engine.init_gui(); // TODO: plug handleUi() here
 
-    engine.run(); // TODO: plug appIterate() here
+    engine.run();
 }

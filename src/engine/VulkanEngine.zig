@@ -7,7 +7,7 @@ const check_vk = vki.check_vk;
 const mesh_mod = @import("mesh.zig");
 const Mesh = mesh_mod.Mesh;
 
-const dvui = @import("dvui");
+pub const dvui = @import("dvui");
 const DvuiBackend = dvui.backend;
 
 const math3d = @import("math3d.zig");
@@ -23,9 +23,14 @@ const log = std.log.scoped(.vulkan_engine);
 
 const Self = @This();
 
-const VK_NULL_HANDLE = null;
+const App = struct {
+    context: *anyopaque,
+    run_app: *const fn (_: *anyopaque, _: u64) void,
+    draw_contents: *const fn (_: *anyopaque) void,
+    draw_ui: *const fn (_: *anyopaque, _: *dvui.Window) void,
+};
 
-const vk_alloc_cbs: ?*c.vk.AllocationCallbacks = null;
+const VK_NULL_HANDLE = null;
 
 pub const AllocatedBuffer = struct {
     buffer: c.vk.Buffer,
@@ -84,16 +89,76 @@ const UploadContext = struct {
     command_buffer: c.vk.CommandBuffer = VK_NULL_HANDLE,
 };
 
+const MeshPushConstants = struct {
+    data: Vec4,
+    render_matrix: Mat4,
+};
+
+const VulkanDeleter = struct {
+    object: ?*anyopaque,
+    delete_fn: *const fn (entry: *VulkanDeleter, self: *Self) void,
+
+    fn delete(self: *VulkanDeleter, engine: *Self) void {
+        self.delete_fn(self, engine);
+    }
+
+    fn make(object: anytype, func: anytype) VulkanDeleter {
+        const T = @TypeOf(object);
+        comptime {
+            std.debug.assert(@typeInfo(T) == .optional);
+            const Ptr = @typeInfo(T).optional.child;
+            std.debug.assert(@typeInfo(Ptr) == .pointer);
+            std.debug.assert(@typeInfo(Ptr).pointer.size == .one);
+
+            const Fn = @TypeOf(func);
+            std.debug.assert(@typeInfo(Fn) == .@"fn");
+        }
+
+        return VulkanDeleter{
+            .object = object,
+            .delete_fn = struct {
+                fn destroy_impl(entry: *VulkanDeleter, self: *Self) void {
+                    const obj: @TypeOf(object) = @ptrCast(entry.object);
+                    func(self.device, obj, vk_alloc_cbs);
+                }
+            }.destroy_impl,
+        };
+    }
+};
+
+const VmaBufferDeleter = struct {
+    buffer: AllocatedBuffer,
+
+    fn delete(self: *VmaBufferDeleter, engine: *Self) void {
+        c.vma.DestroyBuffer(engine.vma_allocator, self.buffer.buffer, self.buffer.allocation);
+    }
+};
+
+const VmaImageDeleter = struct {
+    image: AllocatedImage,
+
+    fn delete(self: *VmaImageDeleter, engine: *Self) void {
+        c.vma.DestroyImage(engine.vma_allocator, self.image.image, self.image.allocation);
+    }
+};
+
 const FRAME_OVERLAP = 2;
 
+const vk_alloc_cbs: ?*c.vk.AllocationCallbacks = null;
+
+//
 // Data
 //
-frame_number: i32 = 0,
-
-sdl_window: *c.SDL.Window = undefined,
 
 // Keep this around for long standing allocations
 allocator: std.mem.Allocator = undefined,
+
+// App data
+app: App,
+
+// SDL data
+frame_number: i32 = 0,
+sdl_window: *c.SDL.Window = undefined,
 
 // Vulkan data
 instance: c.vk.Instance = VK_NULL_HANDLE,
@@ -142,63 +207,36 @@ deletion_queue: std.ArrayList(VulkanDeleter) = undefined,
 buffer_deletion_queue: std.ArrayList(VmaBufferDeleter) = undefined,
 image_deletion_queue: std.ArrayList(VmaImageDeleter) = undefined,
 
+// UI data
 dvui_backend: ?DvuiBackend = null,
 dvui_window: ?dvui.Window = null,
 
-pub const MeshPushConstants = struct {
-    data: Vec4,
-    render_matrix: Mat4,
-};
-
-pub const VulkanDeleter = struct {
-    object: ?*anyopaque,
-    delete_fn: *const fn (entry: *VulkanDeleter, self: *Self) void,
-
-    fn delete(self: *VulkanDeleter, engine: *Self) void {
-        self.delete_fn(self, engine);
-    }
-
-    fn make(object: anytype, func: anytype) VulkanDeleter {
-        const T = @TypeOf(object);
-        comptime {
-            std.debug.assert(@typeInfo(T) == .optional);
-            const Ptr = @typeInfo(T).optional.child;
-            std.debug.assert(@typeInfo(Ptr) == .pointer);
-            std.debug.assert(@typeInfo(Ptr).pointer.size == .one);
-
-            const Fn = @TypeOf(func);
-            std.debug.assert(@typeInfo(Fn) == .@"fn");
+pub fn init(
+    a: std.mem.Allocator,
+    size: c.vk.Extent2D,
+    comptime AppContext: type,
+    app_context: *AppContext,
+    comptime run_app: *const fn (_: *AppContext, _: u64) void,
+    comptime draw_contents: *const fn (_: *AppContext) void,
+    comptime draw_ui: *const fn (_: *AppContext, _: *dvui.Window) void,
+) Self {
+    const ThisApp = struct {
+        fn _run_app(ctx: *anyopaque, current_time: u64) void {
+            const context: *AppContext = @ptrCast(@alignCast(ctx));
+            return run_app(context, current_time);
         }
 
-        return VulkanDeleter{
-            .object = object,
-            .delete_fn = struct {
-                fn destroy_impl(entry: *VulkanDeleter, self: *Self) void {
-                    const obj: @TypeOf(object) = @ptrCast(entry.object);
-                    func(self.device, obj, vk_alloc_cbs);
-                }
-            }.destroy_impl,
-        };
-    }
-};
+        fn _draw_contents(ctx: *anyopaque) void {
+            const context: *AppContext = @ptrCast(@alignCast(ctx));
+            return draw_contents(context);
+        }
 
-pub const VmaBufferDeleter = struct {
-    buffer: AllocatedBuffer,
+        fn _draw_ui(ctx: *anyopaque, window: *dvui.Window) void {
+            const context: *AppContext = @ptrCast(@alignCast(ctx));
+            return draw_ui(context, window);
+        }
+    };
 
-    fn delete(self: *VmaBufferDeleter, engine: *Self) void {
-        c.vma.DestroyBuffer(engine.vma_allocator, self.buffer.buffer, self.buffer.allocation);
-    }
-};
-
-pub const VmaImageDeleter = struct {
-    image: AllocatedImage,
-
-    fn delete(self: *VmaImageDeleter, engine: *Self) void {
-        c.vma.DestroyImage(engine.vma_allocator, self.image.image, self.image.allocation);
-    }
-};
-
-pub fn init(a: std.mem.Allocator, size: c.vk.Extent2D) Self {
     check_sdl(c.SDL.Init(c.SDL.INIT_VIDEO));
 
     const window = c.SDL.CreateWindow(
@@ -211,8 +249,14 @@ pub fn init(a: std.mem.Allocator, size: c.vk.Extent2D) Self {
     _ = c.SDL.ShowWindow(window);
 
     var engine = Self{
-        .sdl_window = window,
         .allocator = a,
+        .app = .{
+            .context = app_context,
+            .run_app = ThisApp._run_app,
+            .draw_contents = ThisApp._draw_contents,
+            .draw_ui = ThisApp._draw_ui,
+        },
+        .sdl_window = window,
         .deletion_queue = std.ArrayList(VulkanDeleter){},
         .buffer_deletion_queue = std.ArrayList(VmaBufferDeleter){},
         .image_deletion_queue = std.ArrayList(VmaImageDeleter){},
@@ -1306,80 +1350,63 @@ pub fn cleanup(self: *Self) void {
     c.SDL.Quit();
 }
 
-// both dvui and SDL drawing
-fn gui_frame() !void {
-    {
-        var m = dvui.menu(@src(), .horizontal, .{ .background = true, .expand = .horizontal });
-        defer m.deinit();
+// fn gui_stats(vk_backend: *const DvuiBackend.DvuiVkRenderer) !void {
+//     const stats = vk_backend.stats;
 
-        _ = dvui.checkbox(@src(), &dvui.Examples.show_demo_window, "show demo", .{ .gravity_x = 0.1 });
-        // _ = try dvui.checkbox(@src(), &sleep_when_inactive, "sleep when inactive", .{ .gravity_x = 0.1 });
+//     var m = dvui.box(@src(), .{}, .{
+//         .background = true,
+//         .expand = null,
+//         .gravity_x = 1.0,
+//         .min_size_content = .{ .w = 300, .h = 0 },
+//     });
+//     defer m.deinit();
+//     var prc: f32 = 0; // progress bar percent [0..1]
 
-        // var choice: usize = 0;
-        // _ = try dvui.dropdown(@src(), &.{ "immediate (no vsync)", "fifo", "mailbox" }, &choice, .{});
-    }
+//     dvui.labelNoFmt(@src(), "DVUI VK Backend stats", .{}, .{
+//         .expand = .horizontal,
+//         .gravity_x = 0.5,
+//         .font_style = .heading,
+//     });
+//     dvui.label(@src(), "draw_calls:  {}", .{stats.draw_calls}, .{ .expand = .horizontal });
 
-    // look at demo() for examples of dvui widgets, shows in a floating window
-    dvui.Examples.demo();
-}
+//     const idx_max = vk_backend.current_frame.idx_data.len / @sizeOf(DvuiBackend.DvuiVkRenderer.Indice);
+//     dvui.label(@src(), "indices: {} / {}", .{ stats.indices, idx_max }, .{ .expand = .horizontal });
+//     prc = @as(f32, @floatFromInt(stats.indices)) / @as(f32, @floatFromInt(idx_max));
+//     dvui.progress(@src(), .{ .percent = prc }, .{
+//         .expand = .horizontal,
+//         .color_fill = dvui.Color.fromHSLuv(@max(12, (1 - prc * prc) * 155), 99, 50, 100),
+//     });
 
-fn gui_stats(vk_backend: *const DvuiBackend.DvuiVkRenderer) !void {
-    const stats = vk_backend.stats;
+//     const verts_max = vk_backend.current_frame.vtx_data.len / @sizeOf(DvuiBackend.DvuiVkRenderer.Vertex);
+//     dvui.label(@src(), "vertices:  {} / {}", .{ stats.verts, verts_max }, .{ .expand = .horizontal });
+//     prc = @as(f32, @floatFromInt(stats.verts)) / @as(f32, @floatFromInt(verts_max));
+//     dvui.progress(@src(), .{ .percent = prc }, .{
+//         .expand = .horizontal,
+//         .color_fill = dvui.Color.fromHSLuv(@max(12, (1 - prc * prc) * 155), 99, 50, 100),
+//     });
 
-    var m = dvui.box(@src(), .{}, .{
-        .background = true,
-        .expand = null,
-        .gravity_x = 1.0,
-        .min_size_content = .{ .w = 300, .h = 0 },
-    });
-    defer m.deinit();
-    var prc: f32 = 0; // progress bar percent [0..1]
+//     dvui.label(@src(), "Textures:", .{}, .{ .expand = .horizontal, .font_style = .caption_heading });
+//     dvui.label(@src(), "count:  {}", .{stats.textures_alive}, .{ .expand = .horizontal });
+//     dvui.label(@src(), "mem (gpu): {Bi:.1}", .{stats.textures_mem}, .{ .expand = .horizontal });
 
-    dvui.labelNoFmt(@src(), "DVUI VK Backend stats", .{}, .{
-        .expand = .horizontal,
-        .gravity_x = 0.5,
-        .font_style = .heading,
-    });
-    dvui.label(@src(), "draw_calls:  {}", .{stats.draw_calls}, .{ .expand = .horizontal });
-
-    const idx_max = vk_backend.current_frame.idx_data.len / @sizeOf(DvuiBackend.DvuiVkRenderer.Indice);
-    dvui.label(@src(), "indices: {} / {}", .{ stats.indices, idx_max }, .{ .expand = .horizontal });
-    prc = @as(f32, @floatFromInt(stats.indices)) / @as(f32, @floatFromInt(idx_max));
-    dvui.progress(@src(), .{ .percent = prc }, .{
-        .expand = .horizontal,
-        .color_fill = dvui.Color.fromHSLuv(@max(12, (1 - prc * prc) * 155), 99, 50, 100),
-    });
-
-    const verts_max = vk_backend.current_frame.vtx_data.len / @sizeOf(DvuiBackend.DvuiVkRenderer.Vertex);
-    dvui.label(@src(), "vertices:  {} / {}", .{ stats.verts, verts_max }, .{ .expand = .horizontal });
-    prc = @as(f32, @floatFromInt(stats.verts)) / @as(f32, @floatFromInt(verts_max));
-    dvui.progress(@src(), .{ .percent = prc }, .{
-        .expand = .horizontal,
-        .color_fill = dvui.Color.fromHSLuv(@max(12, (1 - prc * prc) * 155), 99, 50, 100),
-    });
-
-    dvui.label(@src(), "Textures:", .{}, .{ .expand = .horizontal, .font_style = .caption_heading });
-    dvui.label(@src(), "count:  {}", .{stats.textures_alive}, .{ .expand = .horizontal });
-    dvui.label(@src(), "mem (gpu): {Bi:.1}", .{stats.textures_mem}, .{ .expand = .horizontal });
-
-    dvui.label(@src(), "Static/Preallocated memory (gpu):", .{}, .{ .expand = .horizontal, .font_style = .caption_heading });
-    const prealloc_mem = vk_backend.host_vis_data.len;
-    dvui.label(@src(), "total:  {Bi:.1}", .{prealloc_mem}, .{ .expand = .horizontal });
-    const prealloc_mem_frame = prealloc_mem / vk_backend.frames.len;
-    const prealloc_mem_frame_used = stats.indices * @sizeOf(DvuiBackend.DvuiVkRenderer.Indice) +
-        stats.verts * @sizeOf(DvuiBackend.DvuiVkRenderer.Vertex);
-    dvui.label(
-        @src(),
-        "current frame:  {Bi:.1} / {Bi:.1}",
-        .{ prealloc_mem_frame_used, prealloc_mem_frame },
-        .{ .expand = .horizontal },
-    );
-    prc = @as(f32, @floatFromInt(prealloc_mem_frame_used)) / @as(f32, @floatFromInt(prealloc_mem_frame));
-    dvui.progress(@src(), .{ .percent = prc }, .{
-        .expand = .horizontal,
-        .color_fill = dvui.Color.fromHSLuv(@max(12, (1 - prc * prc) * 155), 99, 50, 100),
-    });
-}
+//     dvui.label(@src(), "Static/Preallocated memory (gpu):", .{}, .{ .expand = .horizontal, .font_style = .caption_heading });
+//     const prealloc_mem = vk_backend.host_vis_data.len;
+//     dvui.label(@src(), "total:  {Bi:.1}", .{prealloc_mem}, .{ .expand = .horizontal });
+//     const prealloc_mem_frame = prealloc_mem / vk_backend.frames.len;
+//     const prealloc_mem_frame_used = stats.indices * @sizeOf(DvuiBackend.DvuiVkRenderer.Indice) +
+//         stats.verts * @sizeOf(DvuiBackend.DvuiVkRenderer.Vertex);
+//     dvui.label(
+//         @src(),
+//         "current frame:  {Bi:.1} / {Bi:.1}",
+//         .{ prealloc_mem_frame_used, prealloc_mem_frame },
+//         .{ .expand = .horizontal },
+//     );
+//     prc = @as(f32, @floatFromInt(prealloc_mem_frame_used)) / @as(f32, @floatFromInt(prealloc_mem_frame));
+//     dvui.progress(@src(), .{ .percent = prc }, .{
+//         .expand = .horizontal,
+//         .color_fill = dvui.Color.fromHSLuv(@max(12, (1 - prc * prc) * 155), 99, 50, 100),
+//     });
+// }
 
 pub fn run(self: *Self) void {
     // static counter
@@ -1404,6 +1431,9 @@ pub fn run(self: *Self) void {
                 log.debug("unhandled keyboard press", .{});
             }
         }
+
+        // run app logic
+        self.app.run_app(self.app.context, c.SDL.GetTicks());
 
         self.draw();
         self.frame_number +%= 1;
@@ -1503,15 +1533,9 @@ fn draw(self: *Self) void {
         backend.renderer.beginFrame(cmd, self.swapchain_extent);
 
         if (self.dvui_window) |*win| {
-            // beginWait coordinates with waitTime below to run frames only when needed
-            const nstime = win.beginWait(false);
-            win.begin(nstime) catch @panic("win.begin() failed");
-
-            gui_frame() catch @panic("Failed to draw gui_frame()");
-            gui_stats(&backend.renderer) catch @panic("Failed to draw gui_stats()");
-
-            // const end_micros = try win.end(.{});
-            _ = win.end(.{}) catch @panic("win.end() failed");
+            // beginWait coordinates with waitTime (?) below to run frames only when needed
+            _ = win.beginWait(false);
+            self.app.draw_ui(self.app.context, win);
         }
 
         _ = backend.renderer.endFrame();
