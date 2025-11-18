@@ -204,6 +204,21 @@ pub const Mat4 = struct {
         );
     }
 
+    /// Create an orthographic projection matrix
+    /// Maps the region [left, right] x [bottom, top] x [near, far] to normalized device coordinates
+    pub fn orthographic(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) Mat4 {
+        const width = right - left;
+        const height = top - bottom;
+        const depth = far - near;
+
+        return make(
+            Vec4.make(2.0 / width, 0.0, 0.0, 0.0),
+            Vec4.make(0.0, 2.0 / height, 0.0, 0.0),
+            Vec4.make(0.0, 0.0, -1.0 / depth, 0.0),
+            Vec4.make(-(right + left) / width, -(top + bottom) / height, -near / depth, 1.0),
+        );
+    }
+
     /// Create a rotation matrix around an arbitrary axis.
     // TODO: Add a faster version that assume the axis is normalized.
     pub fn rotation(axis: Vec3, angle_rad: f32) Mat4 {

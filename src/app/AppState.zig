@@ -1,5 +1,6 @@
 const std = @import("std");
 const dvui = @import("vulkan_engine").dvui;
+const VulkanEngine = @import("vulkan_engine");
 const Game = @import("Game.zig");
 
 const AppState = @This();
@@ -42,24 +43,41 @@ percent: u7 = 5,
 
 ui: Ui,
 
+// Rendering state
+engine: ?*VulkanEngine = null,
+render_objects: []VulkanEngine.RenderObject = &.{},
+needs_render_update: bool = true,
+
 pub fn iterate(self: *AppState, current_time: u64) void {
     const wait_time: u64 = self.ui.normalizeWait();
     const repeats: usize = self.ui.normalizeRepeat();
     if (wait_time == 0) {
         for (0..repeats) |_| {
             self.game.live();
+            self.needs_render_update = true;
         }
     } else {
         if (current_time -| wait_time > self.last_time) {
             for (0..repeats) |_| {
                 self.game.live();
+                self.needs_render_update = true;
             }
             self.last_time = current_time;
         }
     }
 }
 
-pub fn drawGame(_: *AppState) void {}
+pub fn drawGame(self: *AppState) void {
+    const engine = self.engine orelse return;
+    
+    // Update render objects if needed
+    self.updateRenderObjects(engine);
+    
+    std.log.info("drawGame: about to render {} objects", .{self.render_objects.len});
+    
+    // Render the grid
+    engine.render_grid_objects(self.render_objects);
+}
 
 pub fn handleUi(self: *AppState, window: *dvui.Window) void {
     const gpa = self.gpa;
@@ -151,8 +169,51 @@ pub fn handleUi(self: *AppState, window: *dvui.Window) void {
     _ = window.end(.{}) catch @panic("win.end() failed");
 }
 
+pub fn updateRenderObjects(self: *AppState, engine: *VulkanEngine) void {
+    if (!self.needs_render_update) return;
+    
+    // Free old render objects
+    if (self.render_objects.len > 0) {
+        self.gpa.free(self.render_objects);
+    }
+    
+    // Calculate cell size to fit the grid nicely
+    const grid_width_f: f32 = @floatFromInt(self.game.width);
+    const grid_height_f: f32 = @floatFromInt(self.game.height);
+    
+    // Adjust these to fit your desired grid appearance
+    const viewport_width: f32 = 130.0;  // Should match draw_objects grid_width
+    const viewport_height: f32 = 75.0; // Should match draw_objects grid_height
+    
+    const cell_size_x = (viewport_width * 0.95) / grid_width_f;
+    const cell_size_y = (viewport_height * 0.95) / grid_height_f;
+    const cell_size = @min(cell_size_x, cell_size_y); // Use smaller to maintain aspect ratio
+    const cell_gap = cell_size * 0.05; // 5% gap
+    
+    std.log.info("Cell size: {d:.3}, gap: {d:.3}", .{cell_size, cell_gap});
+    
+    // Create render objects for the actual game grid
+    self.render_objects = VulkanEngine.create_grid_objects(
+        self.gpa,
+        &engine.quad_mesh,
+        &engine.default_material,
+        self.game.grid.grid,
+        self.game.width,
+        self.game.height,
+        cell_size,
+        cell_gap,
+    );
+    
+    std.log.info("Created {} render objects for grid {}x{}", .{self.render_objects.len, self.game.width, self.game.height});
+    
+    self.needs_render_update = false;
+}
+
 pub fn deinit(self: *AppState) void {
     const gpa = self.gpa;
+    if (self.render_objects.len > 0) {
+        gpa.free(self.render_objects);
+    }
     self.game.deinit(gpa);
     self.* = undefined;
     gpa.destroy(self);

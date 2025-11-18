@@ -93,7 +93,6 @@ pub const vk = struct {
     pub const RenderPassBeginInfo = c.VkRenderPassBeginInfo;
     pub const SubmitInfo = c.VkSubmitInfo;
     pub const BufferCopy = c.VkBufferCopy;
-    pub const ResetCommandPool = c.VkResetCommandPool;
     pub const SamplerCreateInfo = c.VkSamplerCreateInfo;
     pub const SamplerAddressMode = c.VkSamplerAddressMode;
     pub const Sampler = c.VkSampler;
@@ -379,6 +378,7 @@ pub const vk = struct {
     pub const DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT = c.VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
 
     pub const CreateCommandPool = c.vkCreateCommandPool;
+    pub const ResetCommandPool = c.vkResetCommandPool;
     pub const DestroyCommandPool = c.vkDestroyCommandPool;
     pub const DestroyInstance = c.vkDestroyInstance;
     pub const DestroySurfaceKHR = c.vkDestroySurfaceKHR;

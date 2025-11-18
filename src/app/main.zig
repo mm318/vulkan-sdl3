@@ -85,6 +85,9 @@ pub fn main() !void {
     );
     defer engine.cleanup();
 
+    // Set engine pointer so AppState can call render functions
+    state.engine = &engine;
+
     engine.init_scene(); // TODO: plug whatever is needed for appIterate() here
     engine.init_gui(); // TODO: plug handleUi() here
 

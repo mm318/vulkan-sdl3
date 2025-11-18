@@ -6,6 +6,7 @@ const vki = @import("vulkan");
 const check_vk = vki.check_vk;
 const mesh_mod = @import("mesh.zig");
 const Mesh = mesh_mod.Mesh;
+const Vertex = mesh_mod.Vertex;
 
 pub const dvui = @import("dvui");
 const DvuiBackend = dvui.backend;
@@ -43,13 +44,13 @@ pub const AllocatedImage = struct {
 };
 
 // Scene management
-const Material = struct {
+pub const Material = struct {
     texture_set: c.vk.DescriptorSet = VK_NULL_HANDLE,
     pipeline: c.vk.Pipeline,
     pipeline_layout: c.vk.PipelineLayout,
 };
 
-const RenderObject = struct {
+pub const RenderObject = struct {
     mesh: *Mesh,
     material: *Material,
     transform: Mat4,
@@ -206,6 +207,13 @@ vma_allocator: c.vma.Allocator = undefined,
 deletion_queue: std.ArrayList(VulkanDeleter) = undefined,
 buffer_deletion_queue: std.ArrayList(VmaBufferDeleter) = undefined,
 image_deletion_queue: std.ArrayList(VmaImageDeleter) = undefined,
+
+// Game of Life rendering data
+mesh_pipeline: c.vk.Pipeline = VK_NULL_HANDLE,
+mesh_pipeline_layout: c.vk.PipelineLayout = VK_NULL_HANDLE,
+quad_mesh: Mesh = undefined,
+default_material: Material = undefined,
+current_cmd: c.vk.CommandBuffer = VK_NULL_HANDLE,
 
 // UI data
 dvui_backend: ?DvuiBackend = null,
@@ -933,25 +941,30 @@ fn init_pipelines(self: *Self) void {
         .pPushConstantRanges = &push_constant_range,
     });
 
-    var mesh_pipeline_layout: c.vk.PipelineLayout = undefined;
-    check_vk(c.vk.CreatePipelineLayout(self.device, &mesh_pipeline_layout_ci, vk_alloc_cbs, &mesh_pipeline_layout)) catch @panic("Failed to create mesh pipeline layout");
+    check_vk(c.vk.CreatePipelineLayout(self.device, &mesh_pipeline_layout_ci, vk_alloc_cbs, &self.mesh_pipeline_layout)) catch @panic("Failed to create mesh pipeline layout");
     self.deletion_queue.append(
         self.allocator,
-        VulkanDeleter.make(mesh_pipeline_layout, c.vk.DestroyPipelineLayout),
+        VulkanDeleter.make(self.mesh_pipeline_layout, c.vk.DestroyPipelineLayout),
     ) catch @panic("Out of memory");
 
-    pipeline_builder.pipeline_layout = mesh_pipeline_layout;
+    pipeline_builder.pipeline_layout = self.mesh_pipeline_layout;
 
-    const mesh_pipeline = pipeline_builder.build(self.device, self.render_pass);
+    self.mesh_pipeline = pipeline_builder.build(self.device, self.render_pass);
     self.deletion_queue.append(
         self.allocator,
-        VulkanDeleter.make(mesh_pipeline, c.vk.DestroyPipeline),
+        VulkanDeleter.make(self.mesh_pipeline, c.vk.DestroyPipeline),
     ) catch @panic("Out of memory");
-    if (mesh_pipeline == VK_NULL_HANDLE) {
+    if (self.mesh_pipeline == VK_NULL_HANDLE) {
         log.err("Failed to create mesh pipeline", .{});
     } else {
         log.info("Created mesh pipeline", .{});
     }
+    
+    // Create default material for Game of Life grid
+    self.default_material = Material{
+        .pipeline = self.mesh_pipeline,
+        .pipeline_layout = self.mesh_pipeline_layout,
+    };
 
     // Textured mesh shader
     var textured_pipe_layout_ci = mesh_pipeline_layout_ci;
@@ -1263,7 +1276,65 @@ fn create_shader_module(self: *Self, code: []const u8) ?c.vk.ShaderModule {
     return shader_module;
 }
 
-pub fn init_scene(_: *Self) void {}
+pub fn init_scene(self: *Self) void {
+    // Create quad mesh for Game of Life cells
+    self.quad_mesh = create_quad_mesh(self.allocator);
+    
+    // Upload quad mesh to GPU
+    const buffer_size = self.quad_mesh.vertices.len * @sizeOf(Vertex);
+    
+    // Create staging buffer
+    const staging_buffer = self.create_buffer(
+        buffer_size,
+        c.vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
+        c.vma.MEMORY_USAGE_CPU_ONLY,
+    );
+    defer {
+        c.vma.DestroyBuffer(self.vma_allocator, staging_buffer.buffer, staging_buffer.allocation);
+    }
+    
+    // Copy vertex data to staging buffer
+    var data: ?*anyopaque = undefined;
+    check_vk(c.vma.MapMemory(self.vma_allocator, staging_buffer.allocation, &data)) catch @panic("Failed to map staging buffer");
+    const dest: [*]Vertex = @ptrCast(@alignCast(data));
+    @memcpy(dest[0..self.quad_mesh.vertices.len], self.quad_mesh.vertices);
+    c.vma.UnmapMemory(self.vma_allocator, staging_buffer.allocation);
+    
+    // Create vertex buffer on GPU
+    self.quad_mesh.vertex_buffer = self.create_buffer(
+        buffer_size,
+        c.vk.BUFFER_USAGE_VERTEX_BUFFER_BIT | c.vk.BUFFER_USAGE_TRANSFER_DST_BIT,
+        c.vma.MEMORY_USAGE_GPU_ONLY,
+    );
+    
+    // Track for cleanup
+    self.buffer_deletion_queue.append(
+        self.allocator,
+        VmaBufferDeleter{ .buffer = self.quad_mesh.vertex_buffer },
+    ) catch @panic("Out of memory");
+    
+    // Copy from staging to GPU buffer
+    self.immediate_submit(struct {
+        staging: AllocatedBuffer,
+        vertex: AllocatedBuffer,
+        size: usize,
+        
+        pub fn submit(ctx: @This(), cmd: c.vk.CommandBuffer) void {
+            const copy_region = c.vk.BufferCopy{
+                .srcOffset = 0,
+                .dstOffset = 0,
+                .size = ctx.size,
+            };
+            c.vk.CmdCopyBuffer(cmd, ctx.staging.buffer, ctx.vertex.buffer, 1, &copy_region);
+        }
+    }{
+        .staging = staging_buffer,
+        .vertex = self.quad_mesh.vertex_buffer,
+        .size = buffer_size,
+    });
+    
+    log.info("Uploaded quad mesh ({} vertices), vertex_buffer={any}", .{self.quad_mesh.vertices.len, self.quad_mesh.vertex_buffer.buffer});
+}
 
 pub fn init_gui(self: *Self) void {
     // how many frames in flight we want
@@ -1408,6 +1479,107 @@ pub fn cleanup(self: *Self) void {
 //     });
 // }
 
+pub fn create_quad_mesh(allocator: std.mem.Allocator) Mesh {
+    const vertices = allocator.alloc(Vertex, 6) catch @panic("OOM");
+    
+    // Two triangles forming a square (0,0 to 1,1)
+    // Triangle 1
+    vertices[0] = Vertex{ 
+        .position = Vec3.make(0.0, 0.0, 0.0), 
+        .normal = Vec3.make(0.0, 0.0, 1.0), 
+        .color = Vec3.make(1.0, 1.0, 1.0), // White
+        .uv = Vec2.make(0.0, 0.0) 
+    };
+    vertices[1] = Vertex{ 
+        .position = Vec3.make(1.0, 0.0, 0.0), 
+        .normal = Vec3.make(0.0, 0.0, 1.0), 
+        .color = Vec3.make(1.0, 1.0, 1.0), 
+        .uv = Vec2.make(1.0, 0.0) 
+    };
+    vertices[2] = Vertex{ 
+        .position = Vec3.make(1.0, 1.0, 0.0), 
+        .normal = Vec3.make(0.0, 0.0, 1.0), 
+        .color = Vec3.make(1.0, 1.0, 1.0), 
+        .uv = Vec2.make(1.0, 1.0) 
+    };
+    
+    // Triangle 2
+    vertices[3] = Vertex{ 
+        .position = Vec3.make(0.0, 0.0, 0.0), 
+        .normal = Vec3.make(0.0, 0.0, 1.0), 
+        .color = Vec3.make(1.0, 1.0, 1.0), 
+        .uv = Vec2.make(0.0, 0.0) 
+    };
+    vertices[4] = Vertex{ 
+        .position = Vec3.make(1.0, 1.0, 0.0), 
+        .normal = Vec3.make(0.0, 0.0, 1.0), 
+        .color = Vec3.make(1.0, 1.0, 1.0), 
+        .uv = Vec2.make(1.0, 1.0) 
+    };
+    vertices[5] = Vertex{ 
+        .position = Vec3.make(0.0, 1.0, 0.0), 
+        .normal = Vec3.make(0.0, 0.0, 1.0), 
+        .color = Vec3.make(1.0, 1.0, 1.0), 
+        .uv = Vec2.make(0.0, 1.0) 
+    };
+    
+    return Mesh{ .vertices = vertices };
+}
+
+/// Creates RenderObjects for a grid of cells (Game of Life)
+/// grid_state: array where true = alive (white), false = dead (don't render)
+/// grid_width, grid_height: dimensions of the grid
+/// cell_size: size of each cell in world units
+/// cell_gap: gap between cells in world units
+pub fn create_grid_objects(
+    allocator: std.mem.Allocator,
+    quad_mesh: *Mesh,
+    material: *Material,
+    grid_state: []const bool,
+    grid_width: usize,
+    grid_height: usize,
+    cell_size: f32,
+    cell_gap: f32,
+) []RenderObject {
+    var objects = std.ArrayListUnmanaged(RenderObject){};
+    
+    for (0..grid_height) |y| {
+        for (0..grid_width) |x| {
+            const index = y * grid_width + x;
+            
+            // Only create render objects for alive cells (white squares)
+            if (grid_state[index]) {
+                const x_pos = @as(f32, @floatFromInt(x)) * (cell_size + cell_gap);
+                const y_pos = @as(f32, @floatFromInt(y)) * (cell_size + cell_gap);
+                
+                // Create transform matrix: scale to cell_size, then translate to position
+                // Matrix multiplication order: we want T * S, so we do translation.mul(scale)
+                const scale_mat = Mat4.scale(Vec3.make(cell_size, cell_size, 1.0));
+                const trans_mat = Mat4.translation(Vec3.make(x_pos, y_pos, 0.0));
+                const transform = trans_mat.mul(scale_mat);
+                
+                objects.append(allocator, RenderObject{
+                    .mesh = quad_mesh,
+                    .material = material,
+                    .transform = transform,
+                }) catch @panic("OOM");
+            }
+        }
+    }
+    
+    return objects.toOwnedSlice(allocator) catch @panic("Failed to create grid objects");
+}
+
+/// Call this from your app's draw_contents callback to render grid objects
+pub fn render_grid_objects(self: *Self, objects: []RenderObject) void {
+    if (self.current_cmd == VK_NULL_HANDLE) {
+        log.warn("render_grid_objects called outside of draw context", .{});
+        return;
+    }
+    log.info("Rendering {} grid objects", .{objects.len});
+    self.draw_objects(self.current_cmd, objects);
+}
+
 pub fn run(self: *Self) void {
     // static counter
     const TitleDelay = struct {
@@ -1492,11 +1664,9 @@ fn draw(self: *Self) void {
     check_vk(c.vk.BeginCommandBuffer(cmd, &cmd_begin_info)) catch @panic("Failed to begin command buffer");
 
     // Make a claer color that changes with each frame (120*pi frame period)
-    // 0.11 and 0.12 fix for change in fabs
-    const color = math3d.abs(std.math.sin(@as(f32, @floatFromInt(self.frame_number)) / 120.0));
-
+    // Set clear color to black for Game of Life grid background
     const color_clear: c.vk.ClearValue = .{
-        .color = .{ .float32 = [_]f32{ 0.0, 0.0, color, 1.0 } },
+        .color = .{ .float32 = [_]f32{ 0.0, 0.0, 0.0, 1.0 } },
     };
 
     const depth_clear = c.vk.ClearValue{
@@ -1524,8 +1694,11 @@ fn draw(self: *Self) void {
     });
     c.vk.CmdBeginRenderPass(cmd, &render_pass_begin_info, c.vk.SUBPASS_CONTENTS_INLINE);
 
-    // Objects
-    self.draw_objects(cmd, &.{});
+    // Store current command buffer for app to use
+    self.current_cmd = cmd;
+    
+    // Update app render state and draw objects
+    self.app.draw_contents(self.app.context);
 
     // gui
     if (self.dvui_backend) |*backend| {
@@ -1570,10 +1743,21 @@ fn draw(self: *Self) void {
 }
 
 fn draw_objects(self: *Self, cmd: c.vk.CommandBuffer, objects: []RenderObject) void {
-    const aspect = @as(f32, @floatFromInt(self.swapchain_extent.width)) / @as(f32, @floatFromInt(self.swapchain_extent.height));
-
-    var proj = Mat4.perspective(std.math.degreesToRadians(70.0), aspect, 0.1, 200.0);
-    proj.j.y *= -1.0;
+    if (objects.len == 0) {
+        log.info("draw_objects called with 0 objects", .{});
+        return;
+    }
+    
+    log.info("draw_objects: rendering {} objects", .{objects.len});
+    
+    // Use orthographic projection for 2D grid rendering
+    // This creates a coordinate system where (0,0) is top-left
+    // Grid is 128x72, so we use those dimensions plus some margin
+    const grid_width: f32 = 130.0;  // Slightly larger than 128
+    const grid_height: f32 = 75.0;  // Slightly larger than 72
+    // For Vulkan with top-left origin: left, right, bottom, top
+    // We want Y to increase downward, so bottom=0, top=grid_height
+    const proj = Mat4.orthographic(0.0, grid_width, 0.0, grid_height, -1.0, 1.0);
 
     const frame_index: usize = @intCast(@mod(self.frame_number, FRAME_OVERLAP));
 
@@ -1590,9 +1774,15 @@ fn draw_objects(self: *Self, cmd: c.vk.CommandBuffer, objects: []RenderObject) v
     var data: ?*anyopaque = undefined;
     check_vk(c.vma.MapMemory(self.vma_allocator, self.camera_and_scene_buffer.allocation, &data)) catch @panic("Failed to map camera buffer");
 
+    // Update camera data with orthographic projection and identity view
+    const camera_data: *GPUCameraData = @ptrFromInt(@intFromPtr(data) + camera_data_offset);
+    camera_data.view = Mat4.IDENTITY; // Identity view for 2D rendering
+    camera_data.proj = proj;
+    camera_data.view_proj = proj; // Since view is identity, view_proj = proj
+
     const scene_data: *GPUSceneData = @ptrFromInt(@intFromPtr(data) + scene_data_offset);
-    const framed = @as(f32, @floatFromInt(self.frame_number)) / 120.0;
-    scene_data.ambient_color = Vec3.make(@sin(framed), 0.0, @cos(framed)).to_point4();
+    // Set ambient color to black for black background
+    scene_data.ambient_color = Vec3.make(0.0, 0.0, 0.0).to_point4();
 
     c.vma.UnmapMemory(self.vma_allocator, self.camera_and_scene_buffer.allocation);
 
@@ -1613,6 +1803,10 @@ fn draw_objects(self: *Self, cmd: c.vk.CommandBuffer, objects: []RenderObject) v
     c.vma.UnmapMemory(self.vma_allocator, self.get_current_frame().object_buffer.allocation);
 
     for (objects, 0..) |object, index| {
+        if (index == 0) {
+            log.info("First object: mesh={*}, material.pipeline={any}, vertices={}", .{object.mesh, object.material.pipeline, object.mesh.vertices.len});
+            log.info("First object transform.t (position): x={d:.2}, y={d:.2}, z={d:.2}, w={d:.2}", .{object.transform.t.x, object.transform.t.y, object.transform.t.z, object.transform.t.w});
+        }
         if (index == 0 or object.material != objects[index - 1].material) {
             c.vk.CmdBindPipeline(cmd, c.vk.PIPELINE_BIND_POINT_GRAPHICS, object.material.pipeline);
 
@@ -1678,6 +1872,9 @@ fn draw_objects(self: *Self, cmd: c.vk.CommandBuffer, objects: []RenderObject) v
             c.vk.CmdBindVertexBuffers(cmd, 0, 1, &object.mesh.vertex_buffer.buffer, &offset);
         }
 
+        if (index == 0) {
+            log.info("About to call CmdDraw with {} vertices, instance={}", .{object.mesh.vertices.len, index});
+        }
         c.vk.CmdDraw(cmd, @as(u32, @intCast(object.mesh.vertices.len)), 1, 0, @intCast(index));
     }
 }
