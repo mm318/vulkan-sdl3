@@ -2,6 +2,8 @@
 
 This app uses Zig and Vulkan in the backend (and SDL3 and DVUI for the frontend).
 
+![Screenshot](screenshot.png)
+
 ## Building and Running
 
 To build and run the program:
