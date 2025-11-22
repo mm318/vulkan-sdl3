@@ -2,6 +2,7 @@ const std = @import("std");
 const dvui = @import("vulkan_engine").dvui;
 const VulkanEngine = @import("vulkan_engine");
 const Game = @import("Game.zig");
+const Benchmark = @import("benchmark.zig").Benchmark;
 
 const AppState = @This();
 
@@ -33,6 +34,8 @@ pub const Ui = struct {
     }
 };
 
+const Activities = enum { compute_game, draw_game, draw_ui };
+
 gpa: std.mem.Allocator,
 arena: std.heap.ArenaAllocator,
 last_error: ?anyerror = null,
@@ -46,6 +49,8 @@ render_objects: std.ArrayList(VulkanEngine.RenderObject) = .{},
 needs_render_update: bool = true,
 
 ui: Ui,
+
+benchmark: Benchmark(Activities) = Benchmark(Activities).init(),
 
 /// Updates RenderObjects for a grid of cells (Game of Life)
 /// grid_state: array where true = alive (white), false = dead (don't render)
@@ -133,6 +138,9 @@ pub fn updateRenderObjects(self: *AppState, engine: *const VulkanEngine) []Vulka
 }
 
 pub fn drawGame(self: *AppState, engine: *VulkanEngine) void {
+    self.benchmark.start(.draw_game);
+    defer _ = self.benchmark.stop(.draw_game);
+
     // Update render objects if needed
     const render_objects = self.updateRenderObjects(engine);
 
@@ -141,6 +149,9 @@ pub fn drawGame(self: *AppState, engine: *VulkanEngine) void {
 }
 
 pub fn iterate(self: *AppState, current_time: u64) void {
+    self.benchmark.start(.compute_game);
+    defer _ = self.benchmark.stop(.compute_game);
+
     const wait_time: u64 = self.ui.normalizeWait();
     const repeats: usize = self.ui.normalizeRepeat();
 
@@ -161,6 +172,9 @@ pub fn iterate(self: *AppState, current_time: u64) void {
 }
 
 pub fn handleUi(self: *AppState, window: *dvui.Window) void {
+    self.benchmark.start(.draw_ui);
+    defer _ = self.benchmark.stop(.draw_ui);
+
     const gpa = self.gpa;
     const arena = self.arena.allocator();
     const ui = &self.ui;

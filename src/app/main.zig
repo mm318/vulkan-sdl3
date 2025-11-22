@@ -86,4 +86,13 @@ pub fn main() !void {
     defer engine.cleanup();
 
     engine.run();
+
+    var stdout_writer = std.fs.File.stdout().writer(&.{});
+    const stdout = &stdout_writer.interface;
+    try stdout.writeAll("\n");
+    try state.benchmark.printSummary(stdout);
+}
+
+test {
+    std.testing.refAllDecls(@This());
 }

@@ -28,16 +28,12 @@
             .url = "https://github.com/mm318/dvui/archive/3d62a0a9bca24496a5d88e37ed0aa20bd69c94e4.zip",
             .hash = "dvui-0.4.0-dev-AQFJmYez1gB9ful12tmJDbsm6TSkLKA-JUU5H1kFWtiS",
         },
-        .zbench = .{
-            .url = "https://github.com/hendriknielaender/zBench/archive/v0.11.1.tar.gz",
-            .hash = "zbench-0.11.1-YTdc7zgmAQDtDcHPFwsLeawui27WjMLWmUwrfz7pIlB2",
-            .lazy = true,
-        },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "src",
+        "shaders",
         "LICENSE",
         "readme.md",
     },
