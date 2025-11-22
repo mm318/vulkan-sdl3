@@ -5,8 +5,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     // Warning LTO breaks emscripten web target
-    const want_lto = b.option(bool, "lto", "enable lto");
-    const benchmark = b.option(bool, "benchmark", "run benchmarks") orelse false;
+    const want_lto = b.option(bool, "lto", "enable lto") orelse false;
 
     const dvui_dep = b.dependency("dvui", .{
         .target = target,
@@ -60,7 +59,7 @@ pub fn build(b: *std.Build) void {
         .name = "game_of_life",
         .root_module = exe_mod,
     });
-    if (want_lto != null and want_lto.?) {
+    if (want_lto) {
         exe.lto = .thin;
     }
     exe.linkLibCpp();
@@ -84,30 +83,6 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
-
-    if (benchmark) {
-        const bench_mod = b.createModule(.{
-            .root_source_file = b.path("src/benchmark.zig"),
-            .target = target,
-            .optimize = optimize,
-        });
-        if (b.lazyDependency("zbench", .{
-            .target = target,
-            .optimize = optimize,
-        })) |zbench| {
-            bench_mod.addImport("zbench", zbench.module("zbench"));
-        }
-
-        const bench_exe = b.addExecutable(.{
-            .name = "bechmark",
-            .root_module = bench_mod,
-        });
-        b.installArtifact(bench_exe);
-
-        const bench_tests = b.addTest(.{ .root_module = bench_mod });
-        const run_bench_tests = b.addRunArtifact(bench_tests);
-        test_step.dependOn(&run_bench_tests.step);
-    }
 }
 
 fn compile_all_shaders(b: *std.Build, mod: *std.Build.Module) void {

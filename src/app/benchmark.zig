@@ -104,11 +104,7 @@ pub fn Benchmark(comptime CategoryEnum: type) type {
 
 // Example usage and tests
 test "Benchmark basic usage" {
-    const TimingCategory = enum {
-        computation,
-        io,
-        rendering,
-    };
+    const TimingCategory = enum { computation, io, rendering };
 
     var bench = Benchmark(TimingCategory).init();
 
@@ -120,7 +116,7 @@ test "Benchmark basic usage" {
     bench.start(.computation);
     try std.testing.expectEqual(true, bench.isRunning(.computation));
 
-    std.time.sleep(1_000_000); // Sleep for 1ms
+    std.Thread.sleep(1_000_000); // Sleep for 1ms
 
     const elapsed = bench.stop(.computation);
     try std.testing.expect(elapsed > 0);
@@ -130,7 +126,7 @@ test "Benchmark basic usage" {
     // Test accumulation
     const first_elapsed = bench.getElapsed(.computation);
     bench.start(.computation);
-    std.time.sleep(1_000_000);
+    std.Thread.sleep(1_000_000);
     _ = bench.stop(.computation);
 
     const total_elapsed = bench.getElapsed(.computation);
@@ -142,11 +138,11 @@ test "Benchmark multiple categories" {
     var bench = Benchmark(Categories).init();
 
     bench.start(.category_a);
-    std.time.sleep(1_000_000);
+    std.Thread.sleep(1_000_000);
     _ = bench.stop(.category_a);
 
     bench.start(.category_b);
-    std.time.sleep(2_000_000);
+    std.Thread.sleep(2_000_000);
     _ = bench.stop(.category_b);
 
     try std.testing.expect(bench.getElapsed(.category_a) > 0);
@@ -159,7 +155,7 @@ test "Benchmark reset" {
     var bench = Benchmark(Categories).init();
 
     bench.start(.test_category);
-    std.time.sleep(1_000_000);
+    std.Thread.sleep(1_000_000);
     _ = bench.stop(.test_category);
 
     try std.testing.expect(bench.getElapsed(.test_category) > 0);
@@ -173,7 +169,7 @@ test "Benchmark time conversion helpers" {
     var bench = Benchmark(Categories).init();
 
     bench.start(.conversion_test);
-    std.time.sleep(5_000_000); // 5ms
+    std.Thread.sleep(5_000_000); // 5ms
     _ = bench.stop(.conversion_test);
 
     const elapsed_ms = bench.getElapsedMs(.conversion_test);
