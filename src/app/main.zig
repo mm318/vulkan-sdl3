@@ -85,7 +85,5 @@ pub fn main() !void {
     );
     defer engine.cleanup();
 
-    engine.init_gui(); // TODO: move this into VulkanEngine.init()
-
     engine.run();
 }

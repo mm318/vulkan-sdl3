@@ -45,18 +45,19 @@ const App = struct {
 
 const VK_NULL_HANDLE = null;
 
+// TODO: make non-public
 pub const AllocatedBuffer = struct {
     buffer: c.vk.Buffer,
     allocation: c.vma.Allocation,
 };
 
-pub const AllocatedImage = struct {
+const AllocatedImage = struct {
     image: c.vk.Image,
     allocation: c.vma.Allocation,
 };
 
 // Scene management
-pub const Material = struct {
+const Material = struct {
     texture_set: c.vk.DescriptorSet = VK_NULL_HANDLE,
     pipeline: c.vk.Pipeline,
     pipeline_layout: c.vk.PipelineLayout,
@@ -227,7 +228,6 @@ buffer_deletion_queue: std.ArrayList(VmaBufferDeleter) = undefined,
 image_deletion_queue: std.ArrayList(VmaImageDeleter) = undefined,
 
 // UI data
-dvui_backend: ?DvuiBackend = null,
 dvui_window: ?dvui.Window = null,
 
 pub fn init(
@@ -304,7 +304,7 @@ pub fn init(
     engine.init_descriptors();
     engine.init_pipelines();
     engine.load_meshes();
-    // engine.init_gui();   // TODO: move from main.zig to here
+    engine.init_gui();
 
     return engine;
 }
@@ -1286,7 +1286,7 @@ fn upload_mesh(self: *Self, mesh: *Mesh) void {
     log.info("Uploaded quad mesh ({} vertices), vertex_buffer={any}", .{ mesh.vertices.len, mesh.vertex_buffer.buffer });
 }
 
-pub fn init_gui(self: *Self) void {
+fn init_gui(self: *Self) void {
     // how many frames in flight we want
     // NOTE: swapchain image count = prefered_frames_in_flight + 1 (because 1 is being presented and not worked on)
     // const prefered_frames_in_flight = 2;
@@ -1295,9 +1295,10 @@ pub fn init_gui(self: *Self) void {
     const max_frames_in_flight = 3;
 
     // create SDL backend using existing window and renderer, app still owns the window/renderer
-    self.dvui_backend = DvuiBackend.init(
+    const dvui_backend_ptr = self.allocator.create(DvuiBackend) catch @panic("Failed to allocate DvuiBackend");
+    dvui_backend_ptr.* = DvuiBackend.init(
         self.allocator,
-        @ptrCast(self.sdl_window),
+        self.sdl_window,
         .{
             .dev = self.device,
             .queue = self.graphics_queue, // or should it be self.present_queue
@@ -1319,20 +1320,25 @@ pub fn init_gui(self: *Self) void {
     );
 
     // init dvui Window (maps onto a single OS window)
-    self.dvui_window = dvui.Window.init(@src(), self.allocator, self.dvui_backend.?.backend(), .{}) catch @panic("Failed to create DVUI window");
+    self.dvui_window = dvui.Window.init(@src(), self.allocator, dvui_backend_ptr.backend(), .{}) catch @panic("Failed to create DVUI window");
     self.dvui_window.?.theme = dvui.Theme.builtin.adwaita_dark;
 
     dvui.Examples.show_demo_window = true;
+}
+
+// caller is responsible for checking that self.dvui_window is non-null
+fn dvui_backend(self: *const Self) *DvuiBackend {
+    return self.dvui_window.?.backend.impl;
 }
 
 pub fn cleanup(self: *Self) void {
     check_vk(c.vk.DeviceWaitIdle(self.device)) catch @panic("Failed to wait for device idle");
 
     if (self.dvui_window) |*dvui_window| {
+        const dvui_backend_ptr = self.dvui_backend();
         dvui_window.deinit();
-    }
-    if (self.dvui_backend) |*dvui_backend| {
-        dvui_backend.deinit();
+        dvui_backend_ptr.deinit();
+        self.allocator.destroy(dvui_backend_ptr);
     }
 
     self.allocator.free(self.quad_mesh.vertices);
@@ -1446,9 +1452,7 @@ pub fn run(self: *Self) void {
         while (c.SDL.PollEvent(&event) != false) {
             if (event.type == c.SDL.EVENT_QUIT) {
                 quit = true;
-            } else if (self.dvui_backend != null and self.dvui_window != null and
-                self.dvui_backend.?.addEvent(&self.dvui_window.?, event) catch false)
-            {
+            } else if (self.dvui_window != null and addEvent(&self.dvui_window.?, event) catch false) {
                 // Nothing to do here
             } else if (event.type == c.SDL.EVENT_KEY_DOWN) {
                 log.debug("unhandled keyboard press", .{});
@@ -1552,17 +1556,18 @@ fn draw(self: *Self) void {
     self.app.draw_contents(self);
 
     // gui
-    if (self.dvui_backend) |*backend| {
+    if (self.dvui_window) |*win| {
         // log.debug("swapchain_extent={} win_size_in_pixels={}", .{self.swapchain_extent, backend.windowSizeInPixels()});
-        backend.renderer.beginFrame(cmd, self.swapchain_extent);
+        self.dvui_backend().renderer.beginFrame(cmd, self.swapchain_extent);
 
-        if (self.dvui_window) |*win| {
-            // beginWait coordinates with waitTime (?) below to run frames only when needed
-            _ = win.beginWait(false);
-            self.app.draw_ui(win);
-        }
+        // beginWait coordinates with waitTime (?) below to run frames only when needed
+        _ = win.beginWait(false);
 
-        _ = backend.renderer.endFrame();
+        win.begin(std.time.nanoTimestamp()) catch @panic("window.begin() failed");
+        self.app.draw_ui(win);
+        _ = win.end(.{}) catch @panic("win.end() failed");
+
+        _ = self.dvui_backend().renderer.endFrame();
     } else {
         c.vk.CmdEndRenderPass(cmd);
     }
@@ -1840,6 +1845,291 @@ pub fn immediate_submit(self: *Self, submit_ctx: anytype) void {
     check_vk(c.vk.ResetFences(self.device, 1, &self.upload_context.upload_fence)) catch @panic("Failed to reset upload fence");
 
     check_vk(c.vk.ResetCommandPool(self.device, self.upload_context.command_pool, 0)) catch @panic("Failed to reset command pool");
+}
+
+//
+// input handling
+//
+
+const log_input_events = false;
+
+fn addEvent(win: *dvui.Window, event: c.SDL.Event) !bool {
+    switch (event.type) {
+        c.SDL.EVENT_KEY_DOWN => {
+            const sdl_scancode: c.SDL.Scancode = event.key.scancode;
+            const code = SDL_scancode_to_dvui(sdl_scancode);
+            const mod = SDL_keymod_to_dvui(event.key.mod);
+            if (log_input_events) {
+                log.debug("event KEYDOWN {any} {s} {any} {any}\n", .{ sdl_scancode, @tagName(code), mod, event.key.repeat });
+            }
+
+            return try win.addEventKey(.{
+                .code = code,
+                .action = if (event.key.repeat) .repeat else .down,
+                .mod = mod,
+            });
+        },
+        c.SDL.EVENT_KEY_UP => {
+            const sdl_scancode: c.SDL.Scancode = event.key.scancode;
+            const code = SDL_scancode_to_dvui(sdl_scancode);
+            const mod = SDL_keymod_to_dvui(event.key.mod);
+            if (log_input_events) {
+                log.debug("event KEYUP {any} {s} {any}\n", .{ sdl_scancode, @tagName(code), mod });
+            }
+
+            return try win.addEventKey(.{
+                .code = code,
+                .action = .up,
+                .mod = mod,
+            });
+        },
+        c.SDL.EVENT_TEXT_INPUT => {
+            const txt = std.mem.sliceTo(event.text.text, 0);
+            if (log_input_events) {
+                log.debug("event TEXTINPUT {s}\n", .{txt});
+            }
+
+            return try win.addEventText(.{ .text = txt });
+        },
+        c.SDL.EVENT_TEXT_EDITING => {
+            const strlen: u8 = @intCast(c.SDL.strlen(event.edit.text));
+            if (log_input_events) {
+                log.debug("event TEXTEDITING {s} start {d} len {d} strlen {d}\n", .{ event.edit.text, event.edit.start, event.edit.length, strlen });
+            }
+            return try win.addEventText(.{ .text = event.edit.text[0..strlen], .selected = true });
+        },
+        c.SDL.EVENT_MOUSE_MOTION => {
+            // sdl gives us mouse coords in "window coords" which is kind of
+            // like natural coords but ignores content scaling
+            const pixel_size = win.backend.pixelSize();
+            const window_size = win.backend.windowSize();
+            const scale_x = pixel_size.w / window_size.w;
+            const scale_y = pixel_size.h / window_size.h;
+
+            if (log_input_events) {
+                const touch = event.motion.which == c.SDL.TOUCH_MOUSEID;
+                var touch_str: []const u8 = " ";
+                if (touch) touch_str = " touch ";
+                log.debug("event{s}MOUSEMOTION {d} {d} {} {}\n", .{ touch_str, event.motion.x, event.motion.y, scale_x, scale_y });
+            }
+
+            return try win.addEventMouseMotion(.{
+                .pt = .{
+                    .x = event.motion.x * scale_x,
+                    .y = event.motion.y * scale_y,
+                },
+            });
+        },
+        c.SDL.EVENT_MOUSE_BUTTON_DOWN => {
+            if (log_input_events) {
+                const touch = event.motion.which == c.SDL.TOUCH_MOUSEID;
+                var touch_str: []const u8 = " ";
+                if (touch) touch_str = " touch ";
+                log.debug("event{s}MOUSEBUTTONDOWN {d}\n", .{ touch_str, event.button.button });
+            }
+
+            return try win.addEventMouseButton(SDL_mouse_button_to_dvui(event.button.button), .press);
+        },
+        c.SDL.EVENT_MOUSE_BUTTON_UP => {
+            if (log_input_events) {
+                const touch = event.motion.which == c.SDL.TOUCH_MOUSEID;
+                var touch_str: []const u8 = " ";
+                if (touch) touch_str = " touch ";
+                log.debug("event{s}MOUSEBUTTONUP {d}\n", .{ touch_str, event.button.button });
+            }
+
+            return try win.addEventMouseButton(SDL_mouse_button_to_dvui(event.button.button), .release);
+        },
+        c.SDL.EVENT_MOUSE_WHEEL => {
+            // .precise added in 2.0.18
+            const ticks_x = event.wheel.x;
+            const ticks_y = event.wheel.y;
+
+            if (log_input_events) {
+                log.debug("event MOUSEWHEEL {d} {d} {d}\n", .{ ticks_x, ticks_y, event.wheel.which });
+            }
+
+            var ret = false;
+            if (ticks_x != 0) ret = try win.addEventMouseWheel(ticks_x * dvui.scroll_speed, .horizontal);
+            if (ticks_y != 0) ret = try win.addEventMouseWheel(ticks_y * dvui.scroll_speed, .vertical);
+            return ret;
+        },
+        c.SDL.EVENT_FINGER_DOWN => {
+            if (log_input_events) {
+                log.debug("event FINGERDOWN {d} {d} {d}\n", .{ event.tfinger.fingerID, event.tfinger.x, event.tfinger.y });
+            }
+
+            return try win.addEventPointer(.{ .button = .touch0, .action = .press, .xynorm = .{ .x = event.tfinger.x, .y = event.tfinger.y } });
+        },
+        c.SDL.EVENT_FINGER_UP => {
+            if (log_input_events) {
+                log.debug("event FINGERUP {d} {d} {d}\n", .{ event.tfinger.fingerID, event.tfinger.x, event.tfinger.y });
+            }
+
+            return try win.addEventPointer(.{ .button = .touch0, .action = .release, .xynorm = .{ .x = event.tfinger.x, .y = event.tfinger.y } });
+        },
+        c.SDL.EVENT_FINGER_MOTION => {
+            if (log_input_events) {
+                log.debug("event FINGERMOTION {d} {d} {d} {d} {d}\n", .{ event.tfinger.fingerID, event.tfinger.x, event.tfinger.y, event.tfinger.dx, event.tfinger.dy });
+            }
+
+            return try win.addEventTouchMotion(.touch0, event.tfinger.x, event.tfinger.y, event.tfinger.dx, event.tfinger.dy);
+        },
+        else => {
+            if (log_input_events) {
+                log.debug("unhandled SDL event type {any}\n", .{event.type});
+            }
+            return false;
+        },
+    }
+}
+
+fn SDL_mouse_button_to_dvui(button: u8) dvui.enums.Button {
+    return switch (button) {
+        c.SDL.BUTTON_LEFT => .left,
+        c.SDL.BUTTON_MIDDLE => .middle,
+        c.SDL.BUTTON_RIGHT => .right,
+        c.SDL.BUTTON_X1 => .four,
+        c.SDL.BUTTON_X2 => .five,
+        else => blk: {
+            log.debug("SDL_mouse_button_to_dvui.unknown button {d}", .{button});
+            break :blk .six;
+        },
+    };
+}
+
+fn SDL_keymod_to_dvui(keymod: c.SDL.Keymod) dvui.enums.Mod {
+    if (keymod == c.SDL.KMOD_NONE) return dvui.enums.Mod.none;
+
+    var m: u16 = 0;
+    if ((keymod & c.SDL.KMOD_LSHIFT) > 0) m |= @intFromEnum(dvui.enums.Mod.lshift);
+    if ((keymod & c.SDL.KMOD_RSHIFT) > 0) m |= @intFromEnum(dvui.enums.Mod.rshift);
+    if ((keymod & c.SDL.KMOD_LCTRL) > 0) m |= @intFromEnum(dvui.enums.Mod.lcontrol);
+    if ((keymod & c.SDL.KMOD_RCTRL) > 0) m |= @intFromEnum(dvui.enums.Mod.rcontrol);
+    if ((keymod & c.SDL.KMOD_LALT) > 0) m |= @intFromEnum(dvui.enums.Mod.lalt);
+    if ((keymod & c.SDL.KMOD_RALT) > 0) m |= @intFromEnum(dvui.enums.Mod.ralt);
+    if ((keymod & c.SDL.KMOD_LGUI) > 0) m |= @intFromEnum(dvui.enums.Mod.lcommand);
+    if ((keymod & c.SDL.KMOD_RGUI) > 0) m |= @intFromEnum(dvui.enums.Mod.rcommand);
+
+    return @as(dvui.enums.Mod, @enumFromInt(m));
+}
+
+fn SDL_scancode_to_dvui(scancode: c.SDL.Scancode) dvui.enums.Key {
+    return switch (scancode) {
+        c.SDL.SCANCODE_A => .a,
+        c.SDL.SCANCODE_B => .b,
+        c.SDL.SCANCODE_C => .c,
+        c.SDL.SCANCODE_D => .d,
+        c.SDL.SCANCODE_E => .e,
+        c.SDL.SCANCODE_F => .f,
+        c.SDL.SCANCODE_G => .g,
+        c.SDL.SCANCODE_H => .h,
+        c.SDL.SCANCODE_I => .i,
+        c.SDL.SCANCODE_J => .j,
+        c.SDL.SCANCODE_K => .k,
+        c.SDL.SCANCODE_L => .l,
+        c.SDL.SCANCODE_M => .m,
+        c.SDL.SCANCODE_N => .n,
+        c.SDL.SCANCODE_O => .o,
+        c.SDL.SCANCODE_P => .p,
+        c.SDL.SCANCODE_Q => .q,
+        c.SDL.SCANCODE_R => .r,
+        c.SDL.SCANCODE_S => .s,
+        c.SDL.SCANCODE_T => .t,
+        c.SDL.SCANCODE_U => .u,
+        c.SDL.SCANCODE_V => .v,
+        c.SDL.SCANCODE_W => .w,
+        c.SDL.SCANCODE_X => .x,
+        c.SDL.SCANCODE_Y => .y,
+        c.SDL.SCANCODE_Z => .z,
+
+        c.SDL.SCANCODE_0 => .zero,
+        c.SDL.SCANCODE_1 => .one,
+        c.SDL.SCANCODE_2 => .two,
+        c.SDL.SCANCODE_3 => .three,
+        c.SDL.SCANCODE_4 => .four,
+        c.SDL.SCANCODE_5 => .five,
+        c.SDL.SCANCODE_6 => .six,
+        c.SDL.SCANCODE_7 => .seven,
+        c.SDL.SCANCODE_8 => .eight,
+        c.SDL.SCANCODE_9 => .nine,
+
+        c.SDL.SCANCODE_F1 => .f1,
+        c.SDL.SCANCODE_F2 => .f2,
+        c.SDL.SCANCODE_F3 => .f3,
+        c.SDL.SCANCODE_F4 => .f4,
+        c.SDL.SCANCODE_F5 => .f5,
+        c.SDL.SCANCODE_F6 => .f6,
+        c.SDL.SCANCODE_F7 => .f7,
+        c.SDL.SCANCODE_F8 => .f8,
+        c.SDL.SCANCODE_F9 => .f9,
+        c.SDL.SCANCODE_F10 => .f10,
+        c.SDL.SCANCODE_F11 => .f11,
+        c.SDL.SCANCODE_F12 => .f12,
+
+        c.SDL.SCANCODE_KP_DIVIDE => .kp_divide,
+        c.SDL.SCANCODE_KP_MULTIPLY => .kp_multiply,
+        c.SDL.SCANCODE_KP_MINUS => .kp_subtract,
+        c.SDL.SCANCODE_KP_PLUS => .kp_add,
+        c.SDL.SCANCODE_KP_ENTER => .kp_enter,
+        c.SDL.SCANCODE_KP_0 => .kp_0,
+        c.SDL.SCANCODE_KP_1 => .kp_1,
+        c.SDL.SCANCODE_KP_2 => .kp_2,
+        c.SDL.SCANCODE_KP_3 => .kp_3,
+        c.SDL.SCANCODE_KP_4 => .kp_4,
+        c.SDL.SCANCODE_KP_5 => .kp_5,
+        c.SDL.SCANCODE_KP_6 => .kp_6,
+        c.SDL.SCANCODE_KP_7 => .kp_7,
+        c.SDL.SCANCODE_KP_8 => .kp_8,
+        c.SDL.SCANCODE_KP_9 => .kp_9,
+        c.SDL.SCANCODE_KP_PERIOD => .kp_decimal,
+
+        c.SDL.SCANCODE_RETURN => .enter,
+        c.SDL.SCANCODE_ESCAPE => .escape,
+        c.SDL.SCANCODE_TAB => .tab,
+        c.SDL.SCANCODE_LSHIFT => .left_shift,
+        c.SDL.SCANCODE_RSHIFT => .right_shift,
+        c.SDL.SCANCODE_LCTRL => .left_control,
+        c.SDL.SCANCODE_RCTRL => .right_control,
+        c.SDL.SCANCODE_LALT => .left_alt,
+        c.SDL.SCANCODE_RALT => .right_alt,
+        c.SDL.SCANCODE_LGUI => .left_command,
+        c.SDL.SCANCODE_RGUI => .right_command,
+        c.SDL.SCANCODE_MENU => .menu,
+        c.SDL.SCANCODE_NUMLOCKCLEAR => .num_lock,
+        c.SDL.SCANCODE_CAPSLOCK => .caps_lock,
+        c.SDL.SCANCODE_PRINTSCREEN => .print,
+        c.SDL.SCANCODE_SCROLLLOCK => .scroll_lock,
+        c.SDL.SCANCODE_PAUSE => .pause,
+        c.SDL.SCANCODE_DELETE => .delete,
+        c.SDL.SCANCODE_HOME => .home,
+        c.SDL.SCANCODE_END => .end,
+        c.SDL.SCANCODE_PAGEUP => .page_up,
+        c.SDL.SCANCODE_PAGEDOWN => .page_down,
+        c.SDL.SCANCODE_INSERT => .insert,
+        c.SDL.SCANCODE_LEFT => .left,
+        c.SDL.SCANCODE_RIGHT => .right,
+        c.SDL.SCANCODE_UP => .up,
+        c.SDL.SCANCODE_DOWN => .down,
+        c.SDL.SCANCODE_BACKSPACE => .backspace,
+        c.SDL.SCANCODE_SPACE => .space,
+        c.SDL.SCANCODE_MINUS => .minus,
+        c.SDL.SCANCODE_EQUALS => .equal,
+        c.SDL.SCANCODE_LEFTBRACKET => .left_bracket,
+        c.SDL.SCANCODE_RIGHTBRACKET => .right_bracket,
+        c.SDL.SCANCODE_BACKSLASH => .backslash,
+        c.SDL.SCANCODE_SEMICOLON => .semicolon,
+        c.SDL.SCANCODE_APOSTROPHE => .apostrophe,
+        c.SDL.SCANCODE_COMMA => .comma,
+        c.SDL.SCANCODE_PERIOD => .period,
+        c.SDL.SCANCODE_SLASH => .slash,
+        c.SDL.SCANCODE_GRAVE => .grave,
+
+        else => blk: {
+            log.debug("SDL_scancode_to_dvui unknown scancode {d}", .{scancode});
+            break :blk .unknown;
+        },
+    };
 }
 
 //

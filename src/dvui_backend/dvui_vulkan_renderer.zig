@@ -551,7 +551,9 @@ fn pushConstants(self: *Self, w: f32, h: f32, cmdbuf: c.vk.CommandBuffer) void {
 
 pub fn begin(self: *Self, framebuffer_size: dvui.Size.Physical) void {
     self.render_target = null;
-    if (self.cmdbuf == null) @panic("dvui_vulkan_renderer: Command bufer not set before rendering started!");
+    if (self.cmdbuf == null) {
+        @panic("dvui_vulkan_renderer: Command bufer not set before rendering started!");
+    }
 
     const cmdbuf = self.cmdbuf;
     c.vk.CmdBindPipeline(cmdbuf, c.vk.PIPELINE_BIND_POINT_GRAPHICS, self.pipeline);

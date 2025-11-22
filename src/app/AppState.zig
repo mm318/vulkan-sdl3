@@ -165,8 +165,6 @@ pub fn handleUi(self: *AppState, window: *dvui.Window) void {
     const arena = self.arena.allocator();
     const ui = &self.ui;
     {
-        window.begin(std.time.nanoTimestamp()) catch @panic("window.begin() failed");
-
         var float = dvui.floatingWindow(@src(), .{
             .center_on = .{ .x = width - 280, .y = 0, .w = 280, .h = height },
         }, .{});
@@ -246,8 +244,6 @@ pub fn handleUi(self: *AppState, window: *dvui.Window) void {
         // }
         // try ui.backend.textInputRect(window.textInputRequested());
     }
-
-    _ = window.end(.{}) catch @panic("win.end() failed");
 }
 
 pub fn deinit(self: *AppState) void {
