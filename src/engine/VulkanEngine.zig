@@ -26,9 +26,21 @@ const Self = @This();
 
 const App = struct {
     context: *anyopaque,
-    run_app: *const fn (_: *anyopaque, _: u64) void,
-    draw_contents: *const fn (_: *anyopaque) void,
-    draw_ui: *const fn (_: *anyopaque, _: *dvui.Window) void,
+    run_app_fn: *const fn (_: *anyopaque, _: u64) void,
+    draw_contents_fn: *const fn (_: *anyopaque) void,
+    draw_ui_fn: *const fn (_: *anyopaque, _: *dvui.Window) void,
+
+    fn run_app(self: App, current_time: u64) void {
+        self.run_app_fn(self.context, current_time);
+    }
+
+    fn draw_contents(self: App) void {
+        self.draw_contents_fn(self.context);
+    }
+
+    fn draw_ui(self: App, window: *dvui.Window) void {
+        self.draw_ui_fn(self.context, window);
+    }
 };
 
 const VK_NULL_HANDLE = null;
@@ -199,21 +211,20 @@ camera_and_scene_buffer: AllocatedBuffer = undefined,
 
 global_set_layout: c.vk.DescriptorSetLayout = VK_NULL_HANDLE,
 object_set_layout: c.vk.DescriptorSetLayout = VK_NULL_HANDLE,
-single_texture_set_layout: c.vk.DescriptorSetLayout = VK_NULL_HANDLE,
 descriptor_pool: c.vk.DescriptorPool = VK_NULL_HANDLE,
 
 vma_allocator: c.vma.Allocator = undefined,
 
-deletion_queue: std.ArrayList(VulkanDeleter) = undefined,
-buffer_deletion_queue: std.ArrayList(VmaBufferDeleter) = undefined,
-image_deletion_queue: std.ArrayList(VmaImageDeleter) = undefined,
-
-// Game of Life rendering data
+// rendering data for drawing stuff
 mesh_pipeline: c.vk.Pipeline = VK_NULL_HANDLE,
 mesh_pipeline_layout: c.vk.PipelineLayout = VK_NULL_HANDLE,
 quad_mesh: Mesh = undefined,
 default_material: Material = undefined,
 current_cmd: c.vk.CommandBuffer = VK_NULL_HANDLE,
+
+deletion_queue: std.ArrayList(VulkanDeleter) = undefined,
+buffer_deletion_queue: std.ArrayList(VmaBufferDeleter) = undefined,
+image_deletion_queue: std.ArrayList(VmaImageDeleter) = undefined,
 
 // UI data
 dvui_backend: ?DvuiBackend = null,
@@ -260,9 +271,9 @@ pub fn init(
         .allocator = a,
         .app = .{
             .context = app_context,
-            .run_app = ThisApp._run_app,
-            .draw_contents = ThisApp._draw_contents,
-            .draw_ui = ThisApp._draw_ui,
+            .run_app_fn = ThisApp._run_app,
+            .draw_contents_fn = ThisApp._draw_contents,
+            .draw_ui_fn = ThisApp._draw_ui,
         },
         .sdl_window = window,
         .deletion_queue = std.ArrayList(VulkanDeleter){},
@@ -292,6 +303,8 @@ pub fn init(
     engine.init_sync_structures();
     engine.init_descriptors();
     engine.init_pipelines();
+    engine.load_meshes();
+    // engine.init_gui();
 
     return engine;
 }
@@ -756,45 +769,15 @@ const PipelineBuilder = struct {
 };
 
 fn init_pipelines(self: *Self) void {
-    // NOTE: we are currently destroying the shader modules as soon as we are done
-    // creating the pipeline. This is not great if we needed the modules for multiple pipelines.
-    // Howver, for the sake of simplicity, we are doing it this way for now.
-    const red_vert_code align(4) = @embedFile("triangle.vert").*;
-    const red_frag_code align(4) = @embedFile("triangle.frag").*;
-    const red_vert_module = create_shader_module(self, &red_vert_code) orelse VK_NULL_HANDLE;
-    defer c.vk.DestroyShaderModule(self.device, red_vert_module, vk_alloc_cbs);
-    const red_frag_module = create_shader_module(self, &red_frag_code) orelse VK_NULL_HANDLE;
-    defer c.vk.DestroyShaderModule(self.device, red_frag_module, vk_alloc_cbs);
-
-    if (red_vert_module != VK_NULL_HANDLE) log.info("Vert module loaded successfully", .{});
-    if (red_frag_module != VK_NULL_HANDLE) log.info("Frag module loaded successfully", .{});
-
-    const pipeline_layout_ci = std.mem.zeroInit(c.vk.PipelineLayoutCreateInfo, .{
-        .sType = c.vk.STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-    });
-    var triangle_pipeline_layout: c.vk.PipelineLayout = undefined;
-    check_vk(c.vk.CreatePipelineLayout(self.device, &pipeline_layout_ci, vk_alloc_cbs, &triangle_pipeline_layout)) catch @panic("Failed to create pipeline layout");
-    self.deletion_queue.append(
-        self.allocator,
-        VulkanDeleter.make(triangle_pipeline_layout, c.vk.DestroyPipelineLayout),
-    ) catch @panic("Out of memory");
-
-    const vert_stage_ci = std.mem.zeroInit(c.vk.PipelineShaderStageCreateInfo, .{
-        .sType = c.vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        .stage = c.vk.SHADER_STAGE_VERTEX_BIT,
-        .module = red_vert_module,
-        .pName = "main",
-    });
-
-    const frag_stage_ci = std.mem.zeroInit(c.vk.PipelineShaderStageCreateInfo, .{
-        .sType = c.vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        .stage = c.vk.SHADER_STAGE_FRAGMENT_BIT,
-        .module = red_frag_module,
-        .pName = "main",
-    });
+    // Create pipeline for meshes
+    const vertex_descritpion = mesh_mod.Vertex.vertex_input_description;
 
     const vertex_input_state_ci = std.mem.zeroInit(c.vk.PipelineVertexInputStateCreateInfo, .{
         .sType = c.vk.STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        .pVertexAttributeDescriptions = vertex_descritpion.attributes.ptr,
+        .vertexAttributeDescriptionCount = @as(u32, @intCast(vertex_descritpion.attributes.len)),
+        .pVertexBindingDescriptions = vertex_descritpion.bindings.ptr,
+        .vertexBindingDescriptionCount = @as(u32, @intCast(vertex_descritpion.bindings.len)),
     });
 
     const input_assembly_state_ci = std.mem.zeroInit(c.vk.PipelineInputAssemblyStateCreateInfo, .{
@@ -835,10 +818,40 @@ fn init_pipelines(self: *Self) void {
             c.vk.COLOR_COMPONENT_A_BIT,
     });
 
+    const tri_mesh_vert_code align(4) = @embedFile("tri_mesh.vert").*;
+    const tri_mesh_vert_module = create_shader_module(self, &tri_mesh_vert_code) orelse VK_NULL_HANDLE;
+    defer c.vk.DestroyShaderModule(self.device, tri_mesh_vert_module, vk_alloc_cbs);
+    if (tri_mesh_vert_module != VK_NULL_HANDLE) {
+        log.info("Tri-mesh vert module loaded successfully", .{});
+    }
+
+    // Default lit shader
+    const default_lit_frag_code align(4) = @embedFile("default_lit.frag").*;
+    const default_lit_frag_module = create_shader_module(self, &default_lit_frag_code) orelse VK_NULL_HANDLE;
+    defer c.vk.DestroyShaderModule(self.device, default_lit_frag_module, vk_alloc_cbs);
+    if (default_lit_frag_module != VK_NULL_HANDLE) {
+        log.info("Default lit frag module loaded successfully", .{});
+    }
+
+    const vert_stage_ci = std.mem.zeroInit(c.vk.PipelineShaderStageCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = c.vk.SHADER_STAGE_VERTEX_BIT,
+        .module = tri_mesh_vert_module,
+        .pName = "main",
+    });
+
+    const frag_stage_ci = std.mem.zeroInit(c.vk.PipelineShaderStageCreateInfo, .{
+        .sType = c.vk.STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = c.vk.SHADER_STAGE_FRAGMENT_BIT,
+        .module = default_lit_frag_module,
+        .pName = "main",
+    });
+
     var shader_stages = [_]c.vk.PipelineShaderStageCreateInfo{
         vert_stage_ci,
         frag_stage_ci,
     };
+
     var pipeline_builder = PipelineBuilder{
         .shader_stages = shader_stages[0..],
         .vertex_input_state = vertex_input_state_ci,
@@ -858,68 +871,9 @@ fn init_pipelines(self: *Self) void {
         .rasterization_state = rasterization_state_ci,
         .color_blend_attachment_state = color_blend_attachment_state,
         .multisample_state = multisample_state_ci,
-        .pipeline_layout = triangle_pipeline_layout,
+        .pipeline_layout = undefined, // Will be set below
         .depth_stencil_state = depth_stencil_state_ci,
     };
-
-    const red_triangle_pipeline = pipeline_builder.build(self.device, self.render_pass);
-    self.deletion_queue.append(
-        self.allocator,
-        VulkanDeleter.make(red_triangle_pipeline, c.vk.DestroyPipeline),
-    ) catch @panic("Out of memory");
-    if (red_triangle_pipeline == VK_NULL_HANDLE) {
-        log.err("Failed to create red triangle pipeline", .{});
-    } else {
-        log.info("Created red triangle pipeline", .{});
-    }
-
-    const rgb_vert_code align(4) = @embedFile("colored_triangle.vert").*;
-    const rgb_frag_code align(4) = @embedFile("colored_triangle.frag").*;
-    const rgb_vert_module = create_shader_module(self, &rgb_vert_code) orelse VK_NULL_HANDLE;
-    defer c.vk.DestroyShaderModule(self.device, rgb_vert_module, vk_alloc_cbs);
-    const rgb_frag_module = create_shader_module(self, &rgb_frag_code) orelse VK_NULL_HANDLE;
-    defer c.vk.DestroyShaderModule(self.device, rgb_frag_module, vk_alloc_cbs);
-
-    if (rgb_vert_module != VK_NULL_HANDLE) log.info("Vert module loaded successfully", .{});
-    if (rgb_frag_module != VK_NULL_HANDLE) log.info("Frag module loaded successfully", .{});
-
-    pipeline_builder.shader_stages[0].module = rgb_vert_module;
-    pipeline_builder.shader_stages[1].module = rgb_frag_module;
-
-    const rgb_triangle_pipeline = pipeline_builder.build(self.device, self.render_pass);
-    self.deletion_queue.append(
-        self.allocator,
-        VulkanDeleter.make(rgb_triangle_pipeline, c.vk.DestroyPipeline),
-    ) catch @panic("Out of memory");
-    if (rgb_triangle_pipeline == VK_NULL_HANDLE) {
-        log.err("Failed to create rgb triangle pipeline", .{});
-    } else {
-        log.info("Created rgb triangle pipeline", .{});
-    }
-
-    // Create pipeline for meshes
-    const vertex_descritpion = mesh_mod.Vertex.vertex_input_description;
-
-    pipeline_builder.vertex_input_state.pVertexAttributeDescriptions = vertex_descritpion.attributes.ptr;
-    pipeline_builder.vertex_input_state.vertexAttributeDescriptionCount = @as(u32, @intCast(vertex_descritpion.attributes.len));
-    pipeline_builder.vertex_input_state.pVertexBindingDescriptions = vertex_descritpion.bindings.ptr;
-    pipeline_builder.vertex_input_state.vertexBindingDescriptionCount = @as(u32, @intCast(vertex_descritpion.bindings.len));
-
-    const tri_mesh_vert_code align(4) = @embedFile("tri_mesh.vert").*;
-    const tri_mesh_vert_module = create_shader_module(self, &tri_mesh_vert_code) orelse VK_NULL_HANDLE;
-    defer c.vk.DestroyShaderModule(self.device, tri_mesh_vert_module, vk_alloc_cbs);
-
-    if (tri_mesh_vert_module != VK_NULL_HANDLE) log.info("Tri-mesh vert module loaded successfully", .{});
-
-    // Default lit shader
-    const default_lit_frag_code align(4) = @embedFile("default_lit.frag").*;
-    const default_lit_frag_module = create_shader_module(self, &default_lit_frag_code) orelse VK_NULL_HANDLE;
-    defer c.vk.DestroyShaderModule(self.device, default_lit_frag_module, vk_alloc_cbs);
-
-    if (default_lit_frag_module != VK_NULL_HANDLE) log.info("Default lit frag module loaded successfully", .{});
-
-    pipeline_builder.shader_stages[0].module = tri_mesh_vert_module;
-    pipeline_builder.shader_stages[1].module = default_lit_frag_module;
 
     // New layout for push constants
     const push_constant_range = std.mem.zeroInit(c.vk.PushConstantRange, .{
@@ -959,42 +913,12 @@ fn init_pipelines(self: *Self) void {
     } else {
         log.info("Created mesh pipeline", .{});
     }
-    
+
     // Create default material for Game of Life grid
     self.default_material = Material{
         .pipeline = self.mesh_pipeline,
         .pipeline_layout = self.mesh_pipeline_layout,
     };
-
-    // Textured mesh shader
-    var textured_pipe_layout_ci = mesh_pipeline_layout_ci;
-    const textured_set_layoyts = [_]c.vk.DescriptorSetLayout{
-        self.global_set_layout,
-        self.object_set_layout,
-        self.single_texture_set_layout,
-    };
-    textured_pipe_layout_ci.setLayoutCount = @as(u32, @intCast(textured_set_layoyts.len));
-    textured_pipe_layout_ci.pSetLayouts = &textured_set_layoyts;
-
-    var textured_pipe_layout: c.vk.PipelineLayout = undefined;
-    check_vk(c.vk.CreatePipelineLayout(self.device, &textured_pipe_layout_ci, vk_alloc_cbs, &textured_pipe_layout)) catch @panic("Failed to create textured mesh pipeline layout");
-    self.deletion_queue.append(
-        self.allocator,
-        VulkanDeleter.make(textured_pipe_layout, c.vk.DestroyPipelineLayout),
-    ) catch @panic("Out of memory");
-
-    const textured_lit_frag_code align(4) = @embedFile("textured_lit.frag").*;
-    const textured_lit_frag = create_shader_module(self, &textured_lit_frag_code) orelse VK_NULL_HANDLE;
-    defer c.vk.DestroyShaderModule(self.device, textured_lit_frag, vk_alloc_cbs);
-
-    pipeline_builder.shader_stages[1].module = textured_lit_frag;
-    pipeline_builder.pipeline_layout = textured_pipe_layout;
-    const textured_mesh_pipeline = pipeline_builder.build(self.device, self.render_pass);
-
-    self.deletion_queue.append(
-        self.allocator,
-        VulkanDeleter.make(textured_mesh_pipeline, c.vk.DestroyPipeline),
-    ) catch @panic("Out of memory");
 }
 
 fn init_descriptors(self: *Self) void {
@@ -1168,29 +1092,6 @@ fn init_descriptors(self: *Self) void {
 
     c.vk.UpdateDescriptorSets(self.device, @as(u32, @intCast(camera_and_scene_writes.len)), &camera_and_scene_writes, 0, null);
 
-    // =================================
-    // Texture set layout
-    //
-    const texture_bind = std.mem.zeroInit(c.vk.DescriptorSetLayoutBinding, .{
-        .binding = 0,
-        .descriptorType = c.vk.DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .descriptorCount = 1,
-        .stageFlags = c.vk.SHADER_STAGE_FRAGMENT_BIT,
-    });
-
-    const texture_set_ci = std.mem.zeroInit(c.vk.DescriptorSetLayoutCreateInfo, .{
-        .sType = c.vk.STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .bindingCount = 1,
-        .pBindings = &texture_bind,
-    });
-
-    check_vk(c.vk.CreateDescriptorSetLayout(self.device, &texture_set_ci, vk_alloc_cbs, &self.single_texture_set_layout)) catch @panic("Failed to create texture descriptor set layout");
-
-    self.deletion_queue.append(
-        self.allocator,
-        VulkanDeleter.make(self.single_texture_set_layout, c.vk.DestroyDescriptorSetLayout),
-    ) catch @panic("Out of memory");
-
     for (0..FRAME_OVERLAP) |i| {
         // ======================================================================
         // Allocate descriptor sets
@@ -1276,64 +1177,113 @@ fn create_shader_module(self: *Self, code: []const u8) ?c.vk.ShaderModule {
     return shader_module;
 }
 
-pub fn init_scene(self: *Self) void {
-    // Create quad mesh for Game of Life cells
+fn create_quad_mesh(allocator: std.mem.Allocator) Mesh {
+    const vertices = allocator.alloc(Vertex, 6) catch @panic("OOM");
+
+    // Two triangles forming a square (0,0 to 1,1)
+    // Triangle 1
+    vertices[0] = Vertex{
+        .position = Vec3.make(0.0, 0.0, 0.0),
+        .normal = Vec3.make(0.0, 0.0, 1.0),
+        .color = Vec3.make(1.0, 1.0, 1.0), // White
+        .uv = Vec2.make(0.0, 0.0),
+    };
+    vertices[1] = Vertex{
+        .position = Vec3.make(1.0, 0.0, 0.0),
+        .normal = Vec3.make(0.0, 0.0, 1.0),
+        .color = Vec3.make(1.0, 1.0, 1.0),
+        .uv = Vec2.make(1.0, 0.0),
+    };
+    vertices[2] = Vertex{
+        .position = Vec3.make(1.0, 1.0, 0.0),
+        .normal = Vec3.make(0.0, 0.0, 1.0),
+        .color = Vec3.make(1.0, 1.0, 1.0),
+        .uv = Vec2.make(1.0, 1.0),
+    };
+
+    // Triangle 2
+    vertices[3] = Vertex{
+        .position = Vec3.make(0.0, 0.0, 0.0),
+        .normal = Vec3.make(0.0, 0.0, 1.0),
+        .color = Vec3.make(1.0, 1.0, 1.0),
+        .uv = Vec2.make(0.0, 0.0),
+    };
+    vertices[4] = Vertex{
+        .position = Vec3.make(1.0, 1.0, 0.0),
+        .normal = Vec3.make(0.0, 0.0, 1.0),
+        .color = Vec3.make(1.0, 1.0, 1.0),
+        .uv = Vec2.make(1.0, 1.0),
+    };
+    vertices[5] = Vertex{
+        .position = Vec3.make(0.0, 1.0, 0.0),
+        .normal = Vec3.make(0.0, 0.0, 1.0),
+        .color = Vec3.make(1.0, 1.0, 1.0),
+        .uv = Vec2.make(0.0, 1.0),
+    };
+
+    return Mesh{ .vertices = vertices };
+}
+
+fn load_meshes(self: *Self) void {
+    // Create quad mesh
     self.quad_mesh = create_quad_mesh(self.allocator);
-    
+    self.upload_mesh(&self.quad_mesh);
+}
+
+fn upload_mesh(self: *Self, mesh: *Mesh) void {
     // Upload quad mesh to GPU
-    const buffer_size = self.quad_mesh.vertices.len * @sizeOf(Vertex);
-    
+    const buffer_size = mesh.vertices.len * @sizeOf(Vertex);
+
     // Create staging buffer
     const staging_buffer = self.create_buffer(
         buffer_size,
         c.vk.BUFFER_USAGE_TRANSFER_SRC_BIT,
         c.vma.MEMORY_USAGE_CPU_ONLY,
     );
-    defer {
-        c.vma.DestroyBuffer(self.vma_allocator, staging_buffer.buffer, staging_buffer.allocation);
-    }
-    
+    defer c.vma.DestroyBuffer(self.vma_allocator, staging_buffer.buffer, staging_buffer.allocation);
+    log.info("Created staging buffer {}", .{@intFromPtr(staging_buffer.buffer)});
+
     // Copy vertex data to staging buffer
     var data: ?*anyopaque = undefined;
     check_vk(c.vma.MapMemory(self.vma_allocator, staging_buffer.allocation, &data)) catch @panic("Failed to map staging buffer");
     const dest: [*]Vertex = @ptrCast(@alignCast(data));
-    @memcpy(dest[0..self.quad_mesh.vertices.len], self.quad_mesh.vertices);
+    @memcpy(dest[0..mesh.vertices.len], mesh.vertices);
     c.vma.UnmapMemory(self.vma_allocator, staging_buffer.allocation);
-    
+    log.info("Copied mesh data into staging buffer", .{});
+
     // Create vertex buffer on GPU
-    self.quad_mesh.vertex_buffer = self.create_buffer(
+    mesh.vertex_buffer = self.create_buffer(
         buffer_size,
         c.vk.BUFFER_USAGE_VERTEX_BUFFER_BIT | c.vk.BUFFER_USAGE_TRANSFER_DST_BIT,
         c.vma.MEMORY_USAGE_GPU_ONLY,
     );
-    
+    log.info("Created GPU buffer for mesh {}", .{@intFromPtr(mesh.vertex_buffer.buffer)});
+
     // Track for cleanup
     self.buffer_deletion_queue.append(
         self.allocator,
-        VmaBufferDeleter{ .buffer = self.quad_mesh.vertex_buffer },
+        VmaBufferDeleter{ .buffer = mesh.vertex_buffer },
     ) catch @panic("Out of memory");
-    
-    // Copy from staging to GPU buffer
+
+    // Now we can copy immediate the content of the staging buffer to the gpu only memory.
     self.immediate_submit(struct {
-        staging: AllocatedBuffer,
-        vertex: AllocatedBuffer,
+        mesh_buffer: c.vk.Buffer,
+        staging_buffer: c.vk.Buffer,
         size: usize,
-        
-        pub fn submit(ctx: @This(), cmd: c.vk.CommandBuffer) void {
-            const copy_region = c.vk.BufferCopy{
-                .srcOffset = 0,
-                .dstOffset = 0,
+
+        fn submit(ctx: @This(), cmd: c.vk.CommandBuffer) void {
+            const copy_region = std.mem.zeroInit(c.vk.BufferCopy, .{
                 .size = ctx.size,
-            };
-            c.vk.CmdCopyBuffer(cmd, ctx.staging.buffer, ctx.vertex.buffer, 1, &copy_region);
+            });
+            c.vk.CmdCopyBuffer(cmd, ctx.staging_buffer, ctx.mesh_buffer, 1, &copy_region);
         }
     }{
-        .staging = staging_buffer,
-        .vertex = self.quad_mesh.vertex_buffer,
+        .mesh_buffer = mesh.vertex_buffer.buffer,
+        .staging_buffer = staging_buffer.buffer,
         .size = buffer_size,
     });
-    
-    log.info("Uploaded quad mesh ({} vertices), vertex_buffer={any}", .{self.quad_mesh.vertices.len, self.quad_mesh.vertex_buffer.buffer});
+
+    log.info("Uploaded quad mesh ({} vertices), vertex_buffer={any}", .{ mesh.vertices.len, mesh.vertex_buffer.buffer });
 }
 
 pub fn init_gui(self: *Self) void {
@@ -1384,6 +1334,8 @@ pub fn cleanup(self: *Self) void {
     if (self.dvui_backend) |*dvui_backend| {
         dvui_backend.deinit();
     }
+
+    self.allocator.free(self.quad_mesh.vertices);
 
     for (self.buffer_deletion_queue.items) |*entry| {
         entry.delete(self);
@@ -1479,53 +1431,6 @@ pub fn cleanup(self: *Self) void {
 //     });
 // }
 
-pub fn create_quad_mesh(allocator: std.mem.Allocator) Mesh {
-    const vertices = allocator.alloc(Vertex, 6) catch @panic("OOM");
-    
-    // Two triangles forming a square (0,0 to 1,1)
-    // Triangle 1
-    vertices[0] = Vertex{ 
-        .position = Vec3.make(0.0, 0.0, 0.0), 
-        .normal = Vec3.make(0.0, 0.0, 1.0), 
-        .color = Vec3.make(1.0, 1.0, 1.0), // White
-        .uv = Vec2.make(0.0, 0.0) 
-    };
-    vertices[1] = Vertex{ 
-        .position = Vec3.make(1.0, 0.0, 0.0), 
-        .normal = Vec3.make(0.0, 0.0, 1.0), 
-        .color = Vec3.make(1.0, 1.0, 1.0), 
-        .uv = Vec2.make(1.0, 0.0) 
-    };
-    vertices[2] = Vertex{ 
-        .position = Vec3.make(1.0, 1.0, 0.0), 
-        .normal = Vec3.make(0.0, 0.0, 1.0), 
-        .color = Vec3.make(1.0, 1.0, 1.0), 
-        .uv = Vec2.make(1.0, 1.0) 
-    };
-    
-    // Triangle 2
-    vertices[3] = Vertex{ 
-        .position = Vec3.make(0.0, 0.0, 0.0), 
-        .normal = Vec3.make(0.0, 0.0, 1.0), 
-        .color = Vec3.make(1.0, 1.0, 1.0), 
-        .uv = Vec2.make(0.0, 0.0) 
-    };
-    vertices[4] = Vertex{ 
-        .position = Vec3.make(1.0, 1.0, 0.0), 
-        .normal = Vec3.make(0.0, 0.0, 1.0), 
-        .color = Vec3.make(1.0, 1.0, 1.0), 
-        .uv = Vec2.make(1.0, 1.0) 
-    };
-    vertices[5] = Vertex{ 
-        .position = Vec3.make(0.0, 1.0, 0.0), 
-        .normal = Vec3.make(0.0, 0.0, 1.0), 
-        .color = Vec3.make(1.0, 1.0, 1.0), 
-        .uv = Vec2.make(0.0, 1.0) 
-    };
-    
-    return Mesh{ .vertices = vertices };
-}
-
 /// Creates RenderObjects for a grid of cells (Game of Life)
 /// grid_state: array where true = alive (white), false = dead (don't render)
 /// grid_width, grid_height: dimensions of the grid
@@ -1542,22 +1447,22 @@ pub fn create_grid_objects(
     cell_gap: f32,
 ) []RenderObject {
     var objects = std.ArrayListUnmanaged(RenderObject){};
-    
+
     for (0..grid_height) |y| {
         for (0..grid_width) |x| {
             const index = y * grid_width + x;
-            
+
             // Only create render objects for alive cells (white squares)
             if (grid_state[index]) {
                 const x_pos = @as(f32, @floatFromInt(x)) * (cell_size + cell_gap);
                 const y_pos = @as(f32, @floatFromInt(y)) * (cell_size + cell_gap);
-                
+
                 // Create transform matrix: scale to cell_size, then translate to position
                 // Matrix multiplication order: we want T * S, so we do translation.mul(scale)
                 const scale_mat = Mat4.scale(Vec3.make(cell_size, cell_size, 1.0));
                 const trans_mat = Mat4.translation(Vec3.make(x_pos, y_pos, 0.0));
                 const transform = trans_mat.mul(scale_mat);
-                
+
                 objects.append(allocator, RenderObject{
                     .mesh = quad_mesh,
                     .material = material,
@@ -1566,7 +1471,7 @@ pub fn create_grid_objects(
             }
         }
     }
-    
+
     return objects.toOwnedSlice(allocator) catch @panic("Failed to create grid objects");
 }
 
@@ -1605,7 +1510,7 @@ pub fn run(self: *Self) void {
         }
 
         // run app logic
-        self.app.run_app(self.app.context, c.SDL.GetTicks());
+        self.app.run_app(c.SDL.GetTicks());
 
         self.draw();
         self.frame_number +%= 1;
@@ -1696,9 +1601,9 @@ fn draw(self: *Self) void {
 
     // Store current command buffer for app to use
     self.current_cmd = cmd;
-    
+
     // Update app render state and draw objects
-    self.app.draw_contents(self.app.context);
+    self.app.draw_contents();
 
     // gui
     if (self.dvui_backend) |*backend| {
@@ -1708,7 +1613,7 @@ fn draw(self: *Self) void {
         if (self.dvui_window) |*win| {
             // beginWait coordinates with waitTime (?) below to run frames only when needed
             _ = win.beginWait(false);
-            self.app.draw_ui(self.app.context, win);
+            self.app.draw_ui(win);
         }
 
         _ = backend.renderer.endFrame();
@@ -1747,14 +1652,14 @@ fn draw_objects(self: *Self, cmd: c.vk.CommandBuffer, objects: []RenderObject) v
         log.info("draw_objects called with 0 objects", .{});
         return;
     }
-    
+
     log.info("draw_objects: rendering {} objects", .{objects.len});
-    
+
     // Use orthographic projection for 2D grid rendering
     // This creates a coordinate system where (0,0) is top-left
     // Grid is 128x72, so we use those dimensions plus some margin
-    const grid_width: f32 = 130.0;  // Slightly larger than 128
-    const grid_height: f32 = 75.0;  // Slightly larger than 72
+    const grid_width: f32 = 130.0; // Slightly larger than 128
+    const grid_height: f32 = 75.0; // Slightly larger than 72
     // For Vulkan with top-left origin: left, right, bottom, top
     // We want Y to increase downward, so bottom=0, top=grid_height
     const proj = Mat4.orthographic(0.0, grid_width, 0.0, grid_height, -1.0, 1.0);
@@ -1804,8 +1709,8 @@ fn draw_objects(self: *Self, cmd: c.vk.CommandBuffer, objects: []RenderObject) v
 
     for (objects, 0..) |object, index| {
         if (index == 0) {
-            log.info("First object: mesh={*}, material.pipeline={any}, vertices={}", .{object.mesh, object.material.pipeline, object.mesh.vertices.len});
-            log.info("First object transform.t (position): x={d:.2}, y={d:.2}, z={d:.2}, w={d:.2}", .{object.transform.t.x, object.transform.t.y, object.transform.t.z, object.transform.t.w});
+            log.info("First object: mesh={*}, material.pipeline={any}, vertices={}", .{ object.mesh, object.material.pipeline, object.mesh.vertices.len });
+            log.info("First object transform.t (position): x={d:.2}, y={d:.2}, z={d:.2}, w={d:.2}", .{ object.transform.t.x, object.transform.t.y, object.transform.t.z, object.transform.t.w });
         }
         if (index == 0 or object.material != objects[index - 1].material) {
             c.vk.CmdBindPipeline(cmd, c.vk.PIPELINE_BIND_POINT_GRAPHICS, object.material.pipeline);
@@ -1873,7 +1778,7 @@ fn draw_objects(self: *Self, cmd: c.vk.CommandBuffer, objects: []RenderObject) v
         }
 
         if (index == 0) {
-            log.info("About to call CmdDraw with {} vertices, instance={}", .{object.mesh.vertices.len, index});
+            log.info("About to call CmdDraw with {} vertices, instance={}", .{ object.mesh.vertices.len, index });
         }
         c.vk.CmdDraw(cmd, @as(u32, @intCast(object.mesh.vertices.len)), 1, 0, @intCast(index));
     }
