@@ -112,7 +112,7 @@ pub fn updateRenderObjects(self: *AppState, engine: *const VulkanEngine) []Vulka
     const cell_size_x = (viewport_width * 0.95) / grid_width_f;
     const cell_size_y = (viewport_height * 0.95) / grid_height_f;
     const cell_size = @min(cell_size_x, cell_size_y); // Use smaller to maintain aspect ratio
-    const cell_gap = cell_size * 0.05; // 5% gap
+    const cell_gap = 0;
 
     // std.log.debug("Cell size: {d:.3}, gap: {d:.3}", .{ cell_size, cell_gap });
 
