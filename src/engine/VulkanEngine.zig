@@ -262,7 +262,7 @@ pub fn init(
         "Vulkan",
         @intCast(size.width),
         @intCast(size.height),
-        c.SDL.WINDOW_VULKAN | c.SDL.WINDOW_HIGH_PIXEL_DENSITY | c.SDL.WINDOW_RESIZABLE,
+        c.SDL.WINDOW_VULKAN | c.SDL.WINDOW_HIGH_PIXEL_DENSITY,
     ) orelse @panic("Failed to create SDL window");
 
     _ = c.SDL.ShowWindow(window);
