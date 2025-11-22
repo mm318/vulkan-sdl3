@@ -217,7 +217,7 @@ pub fn handleUi(self: *AppState, window: *dvui.Window) void {
                 .expand = .horizontal,
                 .color_border = if (ui.seed_text_valid) null else .{ .g = 0, .b = 0 },
             });
-            text_entry.deinit();
+            defer text_entry.deinit();
 
             break :blk text_entry.len;
         } else 0;
