@@ -34,9 +34,11 @@ pub fn init(gpa: std.mem.Allocator, width: usize, height: usize) !Game {
 
     const grid = try gpa.alloc(bool, width * height);
     errdefer gpa.free(grid);
+    @memset(grid, false);
 
     const grid_buf = try gpa.alloc(bool, width * height);
     errdefer gpa.free(grid_buf);
+    @memset(grid_buf, false);
 
     return Game{
         .grid = .{ .grid = grid },
@@ -94,12 +96,10 @@ pub fn live(self: *Game) void {
             0...1 => {
                 buf.setAt(offset, false);
             },
-            2 => {},
+            2 => {
+                buf.setAt(offset, cell.alive);
+            },
             3 => {
-                if (cell.alive) {
-                    continue;
-                }
-
                 buf.setAt(offset, true);
             },
             else => {
@@ -123,7 +123,6 @@ pub fn fill(self: *Game, seed: u64, percent: u7) void {
     };
     for (0..num) |_| {
         const i = rng.uintLessThan(usize, self.len());
-
         self.grid.setAt(i, true);
     }
 }
