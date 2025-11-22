@@ -85,9 +85,6 @@ pub fn main() !void {
     );
     defer engine.cleanup();
 
-    // Set engine pointer so AppState can call render functions
-    state.engine = &engine;
-
     engine.init_gui(); // TODO: move this into VulkanEngine.init()
 
     engine.run();

@@ -41,16 +41,109 @@ last_time: u64 = 0,
 seed: u64 = 0,
 percent: u7 = 5,
 
+// Rendering state
+render_objects: std.ArrayList(VulkanEngine.RenderObject) = .{},
+needs_render_update: bool = true,
+
 ui: Ui,
 
-// Rendering state
-engine: ?*VulkanEngine = null,
-render_objects: []VulkanEngine.RenderObject = &.{},
-needs_render_update: bool = true,
+/// Updates RenderObjects for a grid of cells (Game of Life)
+/// grid_state: array where true = alive (white), false = dead (don't render)
+/// grid_width, grid_height: dimensions of the grid
+/// cell_size: size of each cell in world units
+/// cell_gap: gap between cells in world units
+fn updateGridObjects(
+    allocator: std.mem.Allocator,
+    objects: *std.ArrayList(VulkanEngine.RenderObject),
+    engine: *const VulkanEngine,
+    grid_state: []const bool,
+    grid_width: usize,
+    grid_height: usize,
+    cell_size: f32,
+    cell_gap: f32,
+) []VulkanEngine.RenderObject {
+    objects.clearRetainingCapacity();
+
+    // Create transform matrix: scale to cell_size, then translate to position
+    const scale_mat = VulkanEngine.Mat4.scale(VulkanEngine.Vec3.make(cell_size, cell_size, 1.0));
+    for (0..grid_height) |y| {
+        for (0..grid_width) |x| {
+            const index = y * grid_width + x;
+
+            // Only create render objects for alive cells (white squares)
+            if (grid_state[index]) {
+                const x_pos = @as(f32, @floatFromInt(x)) * (cell_size + cell_gap);
+                const y_pos = @as(f32, @floatFromInt(y)) * (cell_size + cell_gap);
+
+                // Matrix multiplication order: we want T * S, so we do translation.mul(scale)
+                const trans_mat = VulkanEngine.Mat4.translation(VulkanEngine.Vec3.make(x_pos, y_pos, 0.0));
+                const transform = trans_mat.mul(scale_mat);
+
+                objects.append(allocator, VulkanEngine.RenderObject{
+                    .mesh = &engine.quad_mesh,
+                    .material = &engine.material,
+                    .transform = transform,
+                }) catch @panic("OOM");
+            }
+        }
+    }
+
+    return objects.items;
+}
+
+pub fn updateRenderObjects(self: *AppState, engine: *const VulkanEngine) []VulkanEngine.RenderObject {
+    if (!self.needs_render_update) {
+        return self.render_objects.items;
+    }
+
+    // Calculate cell size to fit the grid nicely
+    const grid_width_f: f32 = @floatFromInt(self.game.width);
+    const grid_height_f: f32 = @floatFromInt(self.game.height);
+
+    // Adjust these to fit your desired grid appearance
+    const viewport_width: f32 = 130.0; // Should match draw_objects grid_width
+    const viewport_height: f32 = 75.0; // Should match draw_objects grid_height
+
+    const cell_size_x = (viewport_width * 0.95) / grid_width_f;
+    const cell_size_y = (viewport_height * 0.95) / grid_height_f;
+    const cell_size = @min(cell_size_x, cell_size_y); // Use smaller to maintain aspect ratio
+    const cell_gap = cell_size * 0.05; // 5% gap
+
+    // std.log.debug("Cell size: {d:.3}, gap: {d:.3}", .{ cell_size, cell_gap });
+
+    // Create render objects for the actual game grid
+    const render_objects = updateGridObjects(
+        self.gpa,
+        &self.render_objects,
+        engine,
+        self.game.grid.grid,
+        self.game.width,
+        self.game.height,
+        cell_size,
+        cell_gap,
+    );
+    std.log.debug(
+        "Created {} render objects for grid {}x{}",
+        .{ render_objects.len, self.game.width, self.game.height },
+    );
+
+    self.needs_render_update = false;
+
+    return self.render_objects.items;
+}
+
+pub fn drawGame(self: *AppState, engine: *VulkanEngine) void {
+    // Update render objects if needed
+    const render_objects = self.updateRenderObjects(engine);
+
+    // Render the grid
+    engine.draw_objects(render_objects);
+}
 
 pub fn iterate(self: *AppState, current_time: u64) void {
     const wait_time: u64 = self.ui.normalizeWait();
     const repeats: usize = self.ui.normalizeRepeat();
+
     if (wait_time == 0) {
         for (0..repeats) |_| {
             self.game.live();
@@ -65,18 +158,6 @@ pub fn iterate(self: *AppState, current_time: u64) void {
             self.last_time = current_time;
         }
     }
-}
-
-pub fn drawGame(self: *AppState) void {
-    const engine = self.engine orelse return;
-
-    // Update render objects if needed
-    self.updateRenderObjects(engine);
-
-    std.log.info("drawGame: about to render {} objects", .{self.render_objects.len});
-
-    // Render the grid
-    engine.render_grid_objects(self.render_objects);
 }
 
 pub fn handleUi(self: *AppState, window: *dvui.Window) void {
@@ -169,51 +250,9 @@ pub fn handleUi(self: *AppState, window: *dvui.Window) void {
     _ = window.end(.{}) catch @panic("win.end() failed");
 }
 
-pub fn updateRenderObjects(self: *AppState, engine: *VulkanEngine) void {
-    if (!self.needs_render_update) return;
-
-    // Free old render objects
-    if (self.render_objects.len > 0) {
-        self.gpa.free(self.render_objects);
-    }
-
-    // Calculate cell size to fit the grid nicely
-    const grid_width_f: f32 = @floatFromInt(self.game.width);
-    const grid_height_f: f32 = @floatFromInt(self.game.height);
-
-    // Adjust these to fit your desired grid appearance
-    const viewport_width: f32 = 130.0; // Should match draw_objects grid_width
-    const viewport_height: f32 = 75.0; // Should match draw_objects grid_height
-
-    const cell_size_x = (viewport_width * 0.95) / grid_width_f;
-    const cell_size_y = (viewport_height * 0.95) / grid_height_f;
-    const cell_size = @min(cell_size_x, cell_size_y); // Use smaller to maintain aspect ratio
-    const cell_gap = cell_size * 0.05; // 5% gap
-
-    std.log.info("Cell size: {d:.3}, gap: {d:.3}", .{ cell_size, cell_gap });
-
-    // Create render objects for the actual game grid
-    self.render_objects = VulkanEngine.create_grid_objects(
-        self.gpa,
-        &engine.quad_mesh,
-        &engine.default_material,
-        self.game.grid.grid,
-        self.game.width,
-        self.game.height,
-        cell_size,
-        cell_gap,
-    );
-
-    std.log.info("Created {} render objects for grid {}x{}", .{ self.render_objects.len, self.game.width, self.game.height });
-
-    self.needs_render_update = false;
-}
-
 pub fn deinit(self: *AppState) void {
     const gpa = self.gpa;
-    if (self.render_objects.len > 0) {
-        gpa.free(self.render_objects);
-    }
+    self.render_objects.deinit(gpa);
     self.game.deinit(gpa);
     self.* = undefined;
     gpa.destroy(self);

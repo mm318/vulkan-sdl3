@@ -12,13 +12,13 @@ pub const dvui = @import("dvui");
 const DvuiBackend = dvui.backend;
 
 const math3d = @import("math3d.zig");
-const Vec2 = math3d.Vec2;
-const Vec3 = math3d.Vec3;
-const Vec4 = math3d.Vec4;
-const Mat4 = math3d.Mat4;
+pub const Vec2 = math3d.Vec2;
+pub const Vec3 = math3d.Vec3;
+pub const Vec4 = math3d.Vec4;
+pub const Mat4 = math3d.Mat4;
 
-const texs = @import("textures.zig");
-const Texture = texs.Texture;
+// const texs = @import("textures.zig");
+// const Texture = texs.Texture;
 
 const log = std.log.scoped(.vulkan_engine);
 
@@ -27,15 +27,15 @@ const Self = @This();
 const App = struct {
     context: *anyopaque,
     run_app_fn: *const fn (_: *anyopaque, _: u64) void,
-    draw_contents_fn: *const fn (_: *anyopaque) void,
+    draw_contents_fn: *const fn (_: *anyopaque, _: *Self) void,
     draw_ui_fn: *const fn (_: *anyopaque, _: *dvui.Window) void,
 
     fn run_app(self: App, current_time: u64) void {
         self.run_app_fn(self.context, current_time);
     }
 
-    fn draw_contents(self: App) void {
-        self.draw_contents_fn(self.context);
+    fn draw_contents(self: App, engine: *Self) void {
+        self.draw_contents_fn(self.context, engine);
     }
 
     fn draw_ui(self: App, window: *dvui.Window) void {
@@ -63,8 +63,8 @@ pub const Material = struct {
 };
 
 pub const RenderObject = struct {
-    mesh: *Mesh,
-    material: *Material,
+    mesh: *const Mesh,
+    material: *const Material,
     transform: Mat4,
 };
 
@@ -219,7 +219,7 @@ vma_allocator: c.vma.Allocator = undefined,
 mesh_pipeline: c.vk.Pipeline = VK_NULL_HANDLE,
 mesh_pipeline_layout: c.vk.PipelineLayout = VK_NULL_HANDLE,
 quad_mesh: Mesh = undefined,
-default_material: Material = undefined,
+material: Material = undefined,
 current_cmd: c.vk.CommandBuffer = VK_NULL_HANDLE,
 
 deletion_queue: std.ArrayList(VulkanDeleter) = undefined,
@@ -236,7 +236,7 @@ pub fn init(
     comptime AppContext: type,
     app_context: *AppContext,
     comptime run_app: *const fn (_: *AppContext, _: u64) void,
-    comptime draw_contents: *const fn (_: *AppContext) void,
+    comptime draw_contents: *const fn (_: *AppContext, _: *Self) void,
     comptime draw_ui: *const fn (_: *AppContext, _: *dvui.Window) void,
 ) Self {
     const ThisApp = struct {
@@ -245,9 +245,9 @@ pub fn init(
             return run_app(context, current_time);
         }
 
-        fn _draw_contents(ctx: *anyopaque) void {
+        fn _draw_contents(ctx: *anyopaque, engine: *Self) void {
             const context: *AppContext = @ptrCast(@alignCast(ctx));
-            return draw_contents(context);
+            return draw_contents(context, engine);
         }
 
         fn _draw_ui(ctx: *anyopaque, window: *dvui.Window) void {
@@ -304,7 +304,7 @@ pub fn init(
     engine.init_descriptors();
     engine.init_pipelines();
     engine.load_meshes();
-    // engine.init_gui();
+    // engine.init_gui();   // TODO: move from main.zig to here
 
     return engine;
 }
@@ -915,7 +915,7 @@ fn init_pipelines(self: *Self) void {
     }
 
     // Create default material for Game of Life grid
-    self.default_material = Material{
+    self.material = Material{
         .pipeline = self.mesh_pipeline,
         .pipeline_layout = self.mesh_pipeline_layout,
     };
@@ -1431,60 +1431,6 @@ pub fn cleanup(self: *Self) void {
 //     });
 // }
 
-/// Creates RenderObjects for a grid of cells (Game of Life)
-/// grid_state: array where true = alive (white), false = dead (don't render)
-/// grid_width, grid_height: dimensions of the grid
-/// cell_size: size of each cell in world units
-/// cell_gap: gap between cells in world units
-pub fn create_grid_objects(
-    allocator: std.mem.Allocator,
-    quad_mesh: *Mesh,
-    material: *Material,
-    grid_state: []const bool,
-    grid_width: usize,
-    grid_height: usize,
-    cell_size: f32,
-    cell_gap: f32,
-) []RenderObject {
-    var objects = std.ArrayListUnmanaged(RenderObject){};
-
-    for (0..grid_height) |y| {
-        for (0..grid_width) |x| {
-            const index = y * grid_width + x;
-
-            // Only create render objects for alive cells (white squares)
-            if (grid_state[index]) {
-                const x_pos = @as(f32, @floatFromInt(x)) * (cell_size + cell_gap);
-                const y_pos = @as(f32, @floatFromInt(y)) * (cell_size + cell_gap);
-
-                // Create transform matrix: scale to cell_size, then translate to position
-                // Matrix multiplication order: we want T * S, so we do translation.mul(scale)
-                const scale_mat = Mat4.scale(Vec3.make(cell_size, cell_size, 1.0));
-                const trans_mat = Mat4.translation(Vec3.make(x_pos, y_pos, 0.0));
-                const transform = trans_mat.mul(scale_mat);
-
-                objects.append(allocator, RenderObject{
-                    .mesh = quad_mesh,
-                    .material = material,
-                    .transform = transform,
-                }) catch @panic("OOM");
-            }
-        }
-    }
-
-    return objects.toOwnedSlice(allocator) catch @panic("Failed to create grid objects");
-}
-
-/// Call this from your app's draw_contents callback to render grid objects
-pub fn render_grid_objects(self: *Self, objects: []RenderObject) void {
-    if (self.current_cmd == VK_NULL_HANDLE) {
-        log.warn("render_grid_objects called outside of draw context", .{});
-        return;
-    }
-    log.info("Rendering {} grid objects", .{objects.len});
-    self.draw_objects(self.current_cmd, objects);
-}
-
 pub fn run(self: *Self) void {
     // static counter
     const TitleDelay = struct {
@@ -1603,7 +1549,7 @@ fn draw(self: *Self) void {
     self.current_cmd = cmd;
 
     // Update app render state and draw objects
-    self.app.draw_contents();
+    self.app.draw_contents(self);
 
     // gui
     if (self.dvui_backend) |*backend| {
@@ -1647,13 +1593,18 @@ fn draw(self: *Self) void {
     check_vk(c.vk.QueuePresentKHR(self.present_queue, &present_info)) catch @panic("Failed to present swapchain image");
 }
 
-fn draw_objects(self: *Self, cmd: c.vk.CommandBuffer, objects: []RenderObject) void {
+pub fn draw_objects(self: *Self, objects: []RenderObject) void {
+    const cmd = self.current_cmd;
+    if (cmd == VK_NULL_HANDLE) {
+        log.warn("draw_objects called outside of draw context", .{});
+        return;
+    }
     if (objects.len == 0) {
         log.info("draw_objects called with 0 objects", .{});
         return;
     }
 
-    log.info("draw_objects: rendering {} objects", .{objects.len});
+    // log.debug("draw_objects: rendering {} objects", .{objects.len});
 
     // Use orthographic projection for 2D grid rendering
     // This creates a coordinate system where (0,0) is top-left
@@ -1708,10 +1659,17 @@ fn draw_objects(self: *Self, cmd: c.vk.CommandBuffer, objects: []RenderObject) v
     c.vma.UnmapMemory(self.vma_allocator, self.get_current_frame().object_buffer.allocation);
 
     for (objects, 0..) |object, index| {
-        if (index == 0) {
-            log.info("First object: mesh={*}, material.pipeline={any}, vertices={}", .{ object.mesh, object.material.pipeline, object.mesh.vertices.len });
-            log.info("First object transform.t (position): x={d:.2}, y={d:.2}, z={d:.2}, w={d:.2}", .{ object.transform.t.x, object.transform.t.y, object.transform.t.z, object.transform.t.w });
-        }
+        // if (index == 0) {
+        //     log.debug(
+        //         "First object: mesh={*}, material.pipeline={any}, vertices={}",
+        //         .{ object.mesh, object.material.pipeline, object.mesh.vertices.len },
+        //     );
+        //     log.debug(
+        //         "First object transform.t (position): x={d:.2}, y={d:.2}, z={d:.2}, w={d:.2}",
+        //         .{ object.transform.t.x, object.transform.t.y, object.transform.t.z, object.transform.t.w },
+        //     );
+        // }
+
         if (index == 0 or object.material != objects[index - 1].material) {
             c.vk.CmdBindPipeline(cmd, c.vk.PIPELINE_BIND_POINT_GRAPHICS, object.material.pipeline);
 
@@ -1777,9 +1735,10 @@ fn draw_objects(self: *Self, cmd: c.vk.CommandBuffer, objects: []RenderObject) v
             c.vk.CmdBindVertexBuffers(cmd, 0, 1, &object.mesh.vertex_buffer.buffer, &offset);
         }
 
-        if (index == 0) {
-            log.info("About to call CmdDraw with {} vertices, instance={}", .{ object.mesh.vertices.len, index });
-        }
+        // if (index == 0) {
+        //     log.debug("About to call CmdDraw with {} vertices, instance={}", .{ object.mesh.vertices.len, index });
+        // }
+
         c.vk.CmdDraw(cmd, @as(u32, @intCast(object.mesh.vertices.len)), 1, 0, @intCast(index));
     }
 }
