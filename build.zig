@@ -4,20 +4,35 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const vulkan12_target = b.resolveTargetQuery(.{
+        .cpu_arch = .spirv64,
+        .cpu_model = .{ .explicit = &std.Target.spirv.cpu.vulkan_v1_2 },
+        .os_tag = .vulkan,
+        .ofmt = .spirv,
+    });
+
     // Warning LTO breaks emscripten web target
     const want_lto = b.option(bool, "lto", "enable lto") orelse false;
 
+    //
+    // dependencies from build.zig.zon
+    //
+    const zmath_dep = b.dependency("zmath", .{
+        .target = target,
+    });
     const dvui_dep = b.dependency("dvui", .{
         .target = target,
         .optimize = optimize,
         .backend = .custom,
     });
-
     const sdl3_dep = b.dependency("sdl3", .{
         .target = target,
         .optimize = optimize,
     });
 
+    //
+    // modules
+    //
     const vulkan_mod = b.createModule(.{
         .root_source_file = b.path("src/vulkan/vulkan_init.zig"),
         .target = target,
@@ -45,7 +60,8 @@ pub fn build(b: *std.Build) void {
     engine_mod.addImport("vulkan", vulkan_mod);
     engine_mod.addImport("dvui", dvui_mod);
     engine_mod.addImport("dvui_backend", dvui_backend_mod);
-    compile_all_shaders(b, engine_mod);
+    add_zig_shaders(b, engine_mod, vulkan12_target, zmath_dep.module("root"));
+    add_glsl_shaders(b, engine_mod);
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/app/main.zig"),
@@ -85,7 +101,43 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_exe_unit_tests.step);
 }
 
-fn compile_all_shaders(b: *std.Build, mod: *std.Build.Module) void {
+fn add_zig_shaders(
+    b: *std.Build,
+    dest_mod: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
+    zmath_mod: *std.Build.Module,
+) void {
+    const shaders_dir = b.build_root.handle.openDir("shaders", .{ .iterate = true }) catch @panic("Failed to open shaders directory");
+
+    var file_it = shaders_dir.iterate();
+    while (file_it.next() catch @panic("Failed to iterate shader directory")) |entry| {
+        if (entry.kind == .file) {
+            const ext = std.fs.path.extension(entry.name);
+            if (std.mem.eql(u8, ext, ".zig")) {
+                const basename = std.fs.path.basename(entry.name);
+                const name = basename[0 .. basename.len - ext.len];
+
+                std.debug.print("Found shader file to compile: {s}. Compiling with name: {s}\n", .{ entry.name, name });
+                const source = std.fmt.allocPrint(b.allocator, "shaders/{s}.zig", .{name}) catch @panic("OOM");
+                const shader = b.addObject(.{
+                    .name = name,
+                    .root_module = b.createModule(.{
+                        .root_source_file = b.path(source),
+                        .target = target,
+                        .optimize = .ReleaseFast,
+                    }),
+                    .use_llvm = false,
+                    .use_lld = false,
+                });
+                shader.root_module.addImport("zmath", zmath_mod);
+
+                dest_mod.addAnonymousImport(name, .{ .root_source_file = shader.getEmittedBin() });
+            }
+        }
+    }
+}
+
+fn add_glsl_shaders(b: *std.Build, mod: *std.Build.Module) void {
     const shaders_dir = b.build_root.handle.openDir("shaders", .{ .iterate = true }) catch @panic("Failed to open shaders directory");
 
     var file_it = shaders_dir.iterate();
@@ -97,13 +149,13 @@ fn compile_all_shaders(b: *std.Build, mod: *std.Build.Module) void {
                 const name = basename[0 .. basename.len - ext.len];
 
                 std.debug.print("Found shader file to compile: {s}. Compiling with name: {s}\n", .{ entry.name, name });
-                add_shader(b, mod, name);
+                add_glsl_shader(b, mod, name);
             }
         }
     }
 }
 
-fn add_shader(b: *std.Build, mod: *std.Build.Module, name: []const u8) void {
+fn add_glsl_shader(b: *std.Build, mod: *std.Build.Module, name: []const u8) void {
     const source = std.fmt.allocPrint(b.allocator, "shaders/{s}.glsl", .{name}) catch @panic("OOM");
     const outpath = std.fmt.allocPrint(b.allocator, "shaders/{s}.spv", .{name}) catch @panic("OOM");
 
