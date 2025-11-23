@@ -10,6 +10,8 @@ const log = std.log.scoped(.app_state);
 
 pub const width = 1280;
 pub const height = 720;
+const texture_width = AppState.width / 10;
+const texture_height = AppState.height / 10;
 
 pub const Ui = struct {
     seed_text_input: []u8 = &.{},
@@ -51,6 +53,16 @@ needs_render_update: bool = true,
 ui: Ui,
 
 benchmark: Benchmark(Activities) = Benchmark(Activities).init(),
+
+pub fn init(gpa: std.mem.Allocator) !AppState {
+    return .{
+        .gpa = gpa,
+        .arena = std.heap.ArenaAllocator.init(gpa),
+        .game = try Game.init(gpa, texture_width, texture_height),
+        .seed = @bitCast(std.time.milliTimestamp()),
+        .ui = .{},
+    };
+}
 
 /// Updates RenderObjects for a grid of cells (Game of Life)
 /// grid_state: array where true = alive (white), false = dead (don't render)
@@ -264,6 +276,6 @@ pub fn deinit(self: *AppState) void {
     const gpa = self.gpa;
     self.render_objects.deinit(gpa);
     self.game.deinit(gpa);
+    self.arena.deinit();
     self.* = undefined;
-    gpa.destroy(self);
 }

@@ -13,9 +13,6 @@ pub const std_options = std.Options{
 
 const mlog = std.log.scoped(.main);
 
-const texture_width = AppState.width / 10;
-const texture_height = AppState.height / 10;
-
 fn buildTimeVersion() std.SemanticVersion {
     return std.SemanticVersion{
         .major = VulkanEngine.c.SDL.MAJOR_VERSION,
@@ -59,14 +56,7 @@ pub fn main() !void {
     const cwd = std.process.getCwd(&cwd_buff) catch @panic("cwd_buff too small");
     std.log.info("Running from: {s}", .{cwd});
 
-    const state = try gpa.create(AppState);
-    state.* = .{
-        .gpa = gpa,
-        .arena = std.heap.ArenaAllocator.init(gpa),
-        .game = try Game.init(gpa, texture_width, texture_height),
-        .seed = @bitCast(std.time.milliTimestamp()),
-        .ui = .{},
-    };
+    var state = try AppState.init(gpa);
     defer state.deinit();
 
     state.game.fill(state.seed, state.percent);
@@ -78,7 +68,7 @@ pub fn main() !void {
         gpa,
         .{ .width = AppState.width, .height = AppState.height },
         AppState,
-        state,
+        &state,
         AppState.iterate,
         AppState.drawGame,
         AppState.handleUi,
