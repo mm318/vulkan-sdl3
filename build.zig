@@ -45,7 +45,9 @@ pub fn build(b: *std.Build) void {
     engine_mod.addImport("vulkan", vulkan_mod);
     engine_mod.addImport("dvui", dvui_mod);
     engine_mod.addImport("dvui_backend", dvui_backend_mod);
-    compile_all_shaders(b, engine_mod);
+
+    var mods = [_]*std.Build.Module{ dvui_backend_mod, engine_mod };
+    compile_all_shaders(b, &mods);
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/app/main.zig"),
@@ -85,33 +87,73 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_exe_unit_tests.step);
 }
 
-fn compile_all_shaders(b: *std.Build, mod: *std.Build.Module) void {
+fn compile_all_shaders(b: *std.Build, mods: []*std.Build.Module) void {
     const shaders_dir = b.build_root.handle.openDir("shaders", .{ .iterate = true }) catch @panic("Failed to open shaders directory");
 
     var file_it = shaders_dir.iterate();
     while (file_it.next() catch @panic("Failed to iterate shader directory")) |entry| {
         if (entry.kind == .file) {
             const ext = std.fs.path.extension(entry.name);
+            const basename = std.fs.path.basename(entry.name);
+            const name = basename[0 .. basename.len - ext.len];
             if (std.mem.eql(u8, ext, ".glsl")) {
-                const basename = std.fs.path.basename(entry.name);
-                const name = basename[0 .. basename.len - ext.len];
-
-                std.debug.print("Found shader file to compile: {s}. Compiling with name: {s}\n", .{ entry.name, name });
-                add_shader(b, mod, name);
+                add_glsl_shader(b, mods, name);
+            } else if (std.mem.eql(u8, ext, ".slang")) {
+                add_slang_shader(b, mods, name);
             }
         }
     }
 }
 
-fn add_shader(b: *std.Build, mod: *std.Build.Module, name: []const u8) void {
+fn add_glsl_shader(b: *std.Build, mods: []*std.Build.Module, name: []const u8) void {
     const source = std.fmt.allocPrint(b.allocator, "shaders/{s}.glsl", .{name}) catch @panic("OOM");
-    const outpath = std.fmt.allocPrint(b.allocator, "shaders/{s}.spv", .{name}) catch @panic("OOM");
+    const outpath = std.fmt.allocPrint(b.allocator, "{s}.spv", .{name}) catch @panic("OOM");
+    const shader_type = std.fs.path.extension(name);
 
-    const shader_compilation = b.addSystemCommand(&.{"glslangValidator"});
-    shader_compilation.addArg("-V");
+    std.debug.print("Found GLSL shader file to compile: {s}. Compiling to file: {s}\n", .{ name, outpath });
+    const shader_compilation = b.addSystemCommand(&.{"slangc"});
+    shader_compilation.addArg("-profile");
+    if (std.mem.eql(u8, shader_type, ".vert")) {
+        shader_compilation.addArg("vs_6_0");
+    } else if (std.mem.eql(u8, shader_type, ".frag")) {
+        shader_compilation.addArg("ps_6_0");
+    } else {
+        @panic("Unknown shader type. Expected vert or frag");
+    }
+    shader_compilation.addArgs(&.{ "-target", "spirv", "-entry", "main" });
     shader_compilation.addArg("-o");
-    const output = shader_compilation.addOutputFileArg(outpath);
+    const outfile = shader_compilation.addOutputFileArg(outpath);
+    shader_compilation.addArg("-O3");
     shader_compilation.addFileArg(b.path(source));
 
-    mod.addAnonymousImport(name, .{ .root_source_file = output });
+    for (mods) |mod| {
+        mod.addAnonymousImport(outpath, .{ .root_source_file = outfile });
+    }
+}
+
+fn add_slang_shader(b: *std.Build, mods: []*std.Build.Module, name: []const u8) void {
+    const source = std.fmt.allocPrint(b.allocator, "shaders/{s}.slang", .{name}) catch @panic("OOM");
+    const shader_types: []const []const u8 = &.{ ".vert", ".frag" };
+    for (shader_types) |shader_type| {
+        const outpath = std.fmt.allocPrint(b.allocator, "{s}{s}.spv", .{ name, shader_type }) catch @panic("OOM");
+
+        std.debug.print("Found Slang shader file to compile: {s}. Compiling to file: {s}\n", .{ name, outpath });
+        const shader_compilation = b.addSystemCommand(&.{ "slangc", "-target", "spirv" });
+        shader_compilation.addArg("-entry");
+        if (std.mem.eql(u8, shader_type, ".vert")) {
+            shader_compilation.addArg("vertexMain");
+        } else if (std.mem.eql(u8, shader_type, ".frag")) {
+            shader_compilation.addArg("fragmentMain");
+        } else {
+            @panic("Unknown shader type. Expected vert or frag");
+        }
+        shader_compilation.addArg("-o");
+        const outfile = shader_compilation.addOutputFileArg(outpath);
+        shader_compilation.addArg("-O3");
+        shader_compilation.addFileArg(b.path(source));
+
+        for (mods) |mod| {
+            mod.addAnonymousImport(outpath, .{ .root_source_file = outfile });
+        }
+    }
 }

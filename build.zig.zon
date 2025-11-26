@@ -25,7 +25,7 @@
             .hash = "sdl-0.3.0+3.2.22-7uIn9Pg3fwGG2IyIOPxxOSVe-75nUng9clt7tXGFLzMr",
         },
         .dvui = .{
-            .url = "https://github.com/mm318/dvui/archive/3d62a0a9bca24496a5d88e37ed0aa20bd69c94e4.zip",
+            .url = "https://github.com/david-vanderson/dvui/archive/3d62a0a9bca24496a5d88e37ed0aa20bd69c94e4.tar.gz",
             .hash = "dvui-0.4.0-dev-AQFJmYez1gB9ful12tmJDbsm6TSkLKA-JUU5H1kFWtiS",
         },
     },

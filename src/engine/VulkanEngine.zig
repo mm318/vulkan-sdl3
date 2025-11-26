@@ -818,7 +818,7 @@ fn init_pipelines(self: *Self) void {
             c.vk.COLOR_COMPONENT_A_BIT,
     });
 
-    const tri_mesh_vert_code align(4) = @embedFile("tri_mesh.vert").*;
+    const tri_mesh_vert_code align(4) = @embedFile("tri_mesh.vert.spv").*;
     const tri_mesh_vert_module = create_shader_module(self, &tri_mesh_vert_code) orelse VK_NULL_HANDLE;
     defer c.vk.DestroyShaderModule(self.device, tri_mesh_vert_module, vk_alloc_cbs);
     if (tri_mesh_vert_module != VK_NULL_HANDLE) {
@@ -826,7 +826,7 @@ fn init_pipelines(self: *Self) void {
     }
 
     // Default lit shader
-    const default_lit_frag_code align(4) = @embedFile("default_lit.frag").*;
+    const default_lit_frag_code align(4) = @embedFile("default_lit.frag.spv").*;
     const default_lit_frag_module = create_shader_module(self, &default_lit_frag_code) orelse VK_NULL_HANDLE;
     defer c.vk.DestroyShaderModule(self.device, default_lit_frag_module, vk_alloc_cbs);
     if (default_lit_frag_module != VK_NULL_HANDLE) {

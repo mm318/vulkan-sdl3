@@ -36,8 +36,8 @@ pub const Indice = u16;
 pub const invalid_texture: *anyopaque = @ptrFromInt(0xBAD0BAD0); //@ptrFromInt(0xFFFF_FFFF);
 pub const img_format = c.vk.FORMAT_R8G8B8A8_UNORM; // format for textures
 pub const TextureIdx = u16;
-const vs_spv align(64) = @embedFile("dvui.vert.spv").*;
-const fs_spv align(64) = @embedFile("dvui.frag.spv").*;
+const vs_spv align(64) = @embedFile("dvui_shader.vert.spv").*;
+const fs_spv align(64) = @embedFile("dvui_shader.frag.spv").*;
 
 // debug flags
 const enable_breakpoints = false;
