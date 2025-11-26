@@ -818,7 +818,7 @@ fn init_pipelines(self: *Self) void {
             c.vk.COLOR_COMPONENT_A_BIT,
     });
 
-    const tri_mesh_vert_code align(4) = @embedFile("tri_mesh.vert").*;
+    const tri_mesh_vert_code align(4) = @embedFile("tri_mesh_vert").*;
     const tri_mesh_vert_module = create_shader_module(self, &tri_mesh_vert_code) orelse VK_NULL_HANDLE;
     defer c.vk.DestroyShaderModule(self.device, tri_mesh_vert_module, vk_alloc_cbs);
     if (tri_mesh_vert_module != VK_NULL_HANDLE) {

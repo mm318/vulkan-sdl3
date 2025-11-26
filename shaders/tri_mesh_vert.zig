@@ -7,10 +7,10 @@ const Vec3 = @Vector(3, f32);
 const Vec4 = zm.Vec;
 const Mat4 = zm.Mat;
 
-extern var position: Vec3 addrspace(.input);
-extern var normal: Vec3 addrspace(.input);
-extern var color: Vec3 addrspace(.input);
-extern var uv: Vec2 addrspace(.input);
+extern var in_position: Vec3 addrspace(.input);
+extern var in_normal: Vec3 addrspace(.input);
+extern var in_color: Vec3 addrspace(.input);
+extern var in_uv: Vec2 addrspace(.input);
 
 extern var out_color: Vec3 addrspace(.output);
 extern var out_uv: Vec2 addrspace(.output);
@@ -34,10 +34,10 @@ const PushConstants = extern struct {
 extern const push_constants: PushConstants addrspace(.push_constant);
 
 export fn main() callconv(.spirv_vertex) void {
-    gpu.location(&position, 0);
-    gpu.location(&normal, 1);
-    gpu.location(&color, 2);
-    gpu.location(&uv, 3);
+    gpu.location(&in_position, 0);
+    gpu.location(&in_normal, 1);
+    gpu.location(&in_color, 2);
+    gpu.location(&in_uv, 3);
 
     gpu.location(&out_color, 0);
     gpu.location(&out_uv, 1);
@@ -46,8 +46,8 @@ export fn main() callconv(.spirv_vertex) void {
     gpu.binding(&object_buffer, 1, 0);
 
     const transform = zm.mul(camera_data.view_proj, object_buffer.model);
-    const position_v4 = Vec4{ position[0], position[1], position[2], 1.0 };
-    gpu.position_out.* = zm.mul(transform, position_v4);
-    out_uv = uv;
-    out_color = color;
+    const position = Vec4{ in_position[0], in_position[1], in_position[2], 1.0 };
+    gpu.position_out.* = zm.mul(transform, position);
+    out_uv = in_uv;
+    out_color = in_color;
 }
