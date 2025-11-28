@@ -590,13 +590,24 @@ const SwapchainSupportInfo = struct {
     }
 };
 
-fn create_image_view(device: c.vk.Device, image: c.vk.Image, format: c.vk.Format, aspect_flags: c.vk.ImageAspectFlags, alloc_cb: ?*c.vk.AllocationCallbacks) !c.vk.ImageView {
+fn create_image_view(
+    device: c.vk.Device,
+    image: c.vk.Image,
+    format: c.vk.Format,
+    aspect_flags: c.vk.ImageAspectFlags,
+    alloc_cb: ?*c.vk.AllocationCallbacks,
+) !c.vk.ImageView {
     const view_info = std.mem.zeroInit(c.vk.ImageViewCreateInfo, .{
         .sType = c.vk.STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .image = image,
         .viewType = c.vk.IMAGE_VIEW_TYPE_2D,
         .format = format,
-        .components = .{ .r = c.vk.COMPONENT_SWIZZLE_IDENTITY, .g = c.vk.COMPONENT_SWIZZLE_IDENTITY, .b = c.vk.COMPONENT_SWIZZLE_IDENTITY, .a = c.vk.COMPONENT_SWIZZLE_IDENTITY },
+        .components = .{
+            .r = c.vk.COMPONENT_SWIZZLE_IDENTITY,
+            .g = c.vk.COMPONENT_SWIZZLE_IDENTITY,
+            .b = c.vk.COMPONENT_SWIZZLE_IDENTITY,
+            .a = c.vk.COMPONENT_SWIZZLE_IDENTITY,
+        },
         .subresourceRange = .{
             .aspectMask = aspect_flags,
             .baseMipLevel = 0,
@@ -646,15 +657,15 @@ pub fn get_destroy_debug_utils_messenger_fn(instance: c.vk.Instance) c.vk.PFN_De
     return get_vulkan_instance_funct(c.vk.PFN_DestroyDebugUtilsMessengerEXT, instance, "vkDestroyDebugUtilsMessengerEXT");
 }
 
-fn default_debug_callback(severity: c.vk.DebugUtilsMessageSeverityFlagBitsEXT, msg_type: c.vk.DebugUtilsMessageTypeFlagsEXT, callback_data: ?*const c.vk.DebugUtilsMessengerCallbackDataEXT, user_data: ?*anyopaque) callconv(.c) c.vk.Bool32 {
+fn default_debug_callback(
+    severity: c.vk.DebugUtilsMessageSeverityFlagBitsEXT,
+    msg_type: c.vk.DebugUtilsMessageTypeFlagsEXT,
+    callback_data: ?*const c.vk.DebugUtilsMessengerCallbackDataEXT,
+    user_data: ?*anyopaque,
+) callconv(.c) c.vk.Bool32 {
     _ = user_data;
-    const severity_str = switch (severity) {
-        c.vk.DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT => "verbose",
-        c.vk.DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT => "info",
-        c.vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT => "warning",
-        c.vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT => "error",
-        else => "unknown",
-    };
+
+    const message_fmt = "[{s}]. Message:\n  {s}";
 
     const type_str = switch (msg_type) {
         c.vk.DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT => "general",
@@ -664,7 +675,14 @@ fn default_debug_callback(severity: c.vk.DebugUtilsMessageSeverityFlagBitsEXT, m
     };
 
     const message: [*c]const u8 = if (callback_data) |cb_data| cb_data.pMessage else "NO MESSAGE!";
-    log.err("[{s}][{s}]. Message:\n  {s}", .{ severity_str, type_str, message });
+
+    switch (severity) {
+        c.vk.DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT => log.debug(message_fmt, .{ type_str, message }),
+        c.vk.DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT => log.info(message_fmt, .{ type_str, message }),
+        c.vk.DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT => log.warn(message_fmt, .{ type_str, message }),
+        c.vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT => log.err(message_fmt, .{ type_str, message }),
+        else => log.warn(message_fmt, .{ type_str, message }),
+    }
 
     if (severity >= c.vk.DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
         @panic("Unrecoverable vulkan error.");
