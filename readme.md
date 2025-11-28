@@ -6,18 +6,21 @@ This app uses Zig and Vulkan in the backend (and SDL3 and DVUI for the frontend)
 
 ## Building and Running
 
+`slangc` is required to compile the shaders (installation instructions at https://shader-slang.org/slang/user-guide/get-started.html).
+
 To build and run the program:
 ```shell
-zig build run                          # for debug build
-# zig build -Doptimize=ReleaseSafe run # Dependencies have issues with ReleaseSafe
-zig build -Doptimize=ReleaseFast run   # for release build
+zig build run                         # for debug build
+zig build -Doptimize=ReleaseSafe run  # for release build
 ```
 
 To build and run unit tests:
 ```bash
-zig build test --summary all                        # for debug build
-zig build -Doptimize=ReleaseSafe test --summary all # for release build
+zig build test --summary all                         # for debug build
+zig build -Doptimize=ReleaseSafe test --summary all  # for release build
 ```
+
+Tested with Ubuntu 24.04, zig 0.15.2, and slangc 2025.23.1.
 
 ## Credits
 
