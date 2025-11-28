@@ -22,7 +22,7 @@ layout(std140, set = 1, binding = 0) readonly buffer ObjectBuffer {
 	ObjectData objects[];
 } object_buffer;
 
-layout (push_constant) uniform PushConstants {
+layout(push_constant) uniform PushConstants {
 	vec4 data;
 	mat4 render_matrix;
 } push_constants;
@@ -33,4 +33,3 @@ void main() {
 	out_uv = uv;
 	out_color = color;
 }
-

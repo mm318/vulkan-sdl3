@@ -111,19 +111,18 @@ fn add_glsl_shader(b: *std.Build, mods: []*std.Build.Module, name: []const u8) v
     const shader_type = std.fs.path.extension(name);
 
     std.debug.print("Found GLSL shader file to compile: {s}. Compiling to file: {s}\n", .{ name, outpath });
-    const shader_compilation = b.addSystemCommand(&.{"slangc"});
-    shader_compilation.addArg("-profile");
+    const shader_compilation = b.addSystemCommand(&.{ "slangc", "-target", "spirv", "-entry", "main" });
+    shader_compilation.addArg("-stage");
     if (std.mem.eql(u8, shader_type, ".vert")) {
-        shader_compilation.addArg("vs_6_0");
+        shader_compilation.addArg("vertex");
     } else if (std.mem.eql(u8, shader_type, ".frag")) {
-        shader_compilation.addArg("ps_6_0");
+        shader_compilation.addArg("fragment");
     } else {
         @panic("Unknown shader type. Expected vert or frag");
     }
-    shader_compilation.addArgs(&.{ "-target", "spirv", "-entry", "main" });
     shader_compilation.addArg("-o");
     const outfile = shader_compilation.addOutputFileArg(outpath);
-    shader_compilation.addArg("-O3");
+    shader_compilation.addArgs(&.{ "-O3", "-matrix-layout-row-major" });
     shader_compilation.addFileArg(b.path(source));
 
     for (mods) |mod| {
