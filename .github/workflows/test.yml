@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 20 * * *' # run at UTC 8 pm
+
+env:
+  ZIG_VERSION: 0.15.2
+  SLANG_VERSION: 2025.23.1
+
+jobs:
+  test-all-targets:
+    strategy:
+      matrix:
+        include:
+          - target: 'native'
+            optimizaton: 'Debug'
+          - target: 'native'
+            optimizaton: 'ReleaseSafe'
+
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev vulkan-tools
+
+      - name: Install Slang compiler
+        run: |
+          set -euxo pipefail
+          base="https://github.com/shader-slang/slang/releases/download/v${SLANG_VERSION}/slang-${SLANG_VERSION}-linux-x86_64.tar.gz"
+          mkdir -p "$RUNNER_TEMP/slang"
+          curl -fL ${base} -o "$RUNNER_TEMP/slang/slang.tar.gz"
+          tar -xzf "$RUNNER_TEMP/slang/slang.tar.gz" -C "$RUNNER_TEMP/slang"
+          slangc_path="$RUNNER_TEMP/slang/bin/slangc"
+          if [ -z "$slangc_path" ]; then
+            echo "slangc not found" >&2
+            exit 1
+          fi
+          chmod +x "$slangc_path"
+          echo "$(dirname "$slangc_path")" >> "$GITHUB_PATH"
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Check formatting
+        run:  |
+          zig fmt --check .
+
+      - name: Run unit tests
+        run: |
+          zig build -Doptimize=${{ matrix.optimizaton }} test --summary all
