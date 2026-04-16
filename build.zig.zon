@@ -1,0 +1,38 @@
+.{
+    .name = .znn,
+
+    // This is a [Semantic Version](https://semver.org/).
+    // In a future version of Zig it will be used for package deduplication.
+    .version = "0.0.1",
+
+    // This field is optional.
+    // This is currently advisory only; Zig does not yet do anything
+    // with this value.
+    .minimum_zig_version = "0.16.0",
+
+    // This field is optional.
+    // Each dependency must either provide a `url` and `hash`, or a `path`.
+    // `zig build --fetch` can be used to fetch all dependencies of a package, recursively.
+    // Once all dependencies are fetched, `zig build` no longer requires
+    // internet connectivity.
+    .dependencies = .{
+        .dvui = .{
+            .url = "https://github.com/mm318/dvui/archive/4ded0dcf681549b3a1f9ce10154d39acff09f3f8.tar.gz",
+            .hash = "dvui-0.4.0-dev-AQFJmV1a2wBIHEUMKSJXkVb1eWGsMCZGNzR1FIbL-s9I",
+        },
+    },
+
+    .paths = .{
+        // This makes *all* files, recursively, included in this package. It is generally
+        // better to explicitly list the files and directories instead, to insure that
+        // fetching from tarballs, file system paths, and version control all result
+        // in the same contents hash.
+        "src",
+        "build.zig",
+        "build.zig.zon",
+        "docs",
+        "README.md",
+    },
+
+    .fingerprint = 0xf7533ee2d7f7e752,
+}

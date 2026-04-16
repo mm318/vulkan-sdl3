@@ -1,0 +1,12 @@
+.direnv
+build/
+build-*/
+docgen_tmp/
+
+/*.txt
+
+### zig ###
+# Zig programming language
+.zig-cache/
+zig-pkg/
+zig-out/
