@@ -32,6 +32,10 @@ To format the source code:
 zig fmt .
 ```
 
+To run the unit tests:
+```bash
+zig build test
+```
 
 ## Requirements
 

@@ -59,4 +59,26 @@ pub fn build(b: *std.Build) void {
     // This will evaluate the `run` step rather than the default, which is "install".
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
+
+    const game_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/Game.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const benchmark_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/benchmark.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const run_game_tests = b.addRunArtifact(game_tests);
+    const run_benchmark_tests = b.addRunArtifact(benchmark_tests);
+
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&run_game_tests.step);
+    test_step.dependOn(&run_benchmark_tests.step);
 }
