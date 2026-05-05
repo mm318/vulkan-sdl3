@@ -10,10 +10,6 @@ const gpa = gpa_instance.allocator();
 
 const vsync = true;
 const min_refresh_fps: f32 = 30.0;
-const show_demo = false;
-const show_debug_window = false;
-
-var open_debug_window_next_frame = show_debug_window;
 
 pub fn main() !void {
     if (@import("builtin").os.tag == .windows) {
@@ -22,8 +18,6 @@ pub fn main() !void {
 
     SDLBackend.enableSDLLogging();
     std.log.info("SDL version: {f}", .{SDLBackend.getSDLVersion()});
-
-    dvui.Examples.show_demo_window = show_demo;
 
     defer if (gpa_instance.deinit() != .ok) @panic("Memory leak on exit!");
 
@@ -89,15 +83,6 @@ fn gui_frame(win: *dvui.Window, app: *AppState) bool {
     }
 
     app.handleUi();
-
-    if (open_debug_window_next_frame) {
-        dvui.toggleDebugWindow();
-        open_debug_window_next_frame = false;
-    }
-
-    if (show_demo) {
-        dvui.Examples.demo();
-    }
 
     _ = win;
     return checkQuit();
